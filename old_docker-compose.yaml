@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # Flask Web Application
   webapp:
@@ -12,27 +10,24 @@ services:
     volumes:
       - ./webapp:/app/webapp:ro
       - scan-data:/var/security-scans
-      - ./data:/opt/security-audit/data
+      - app-data:/opt/security-audit/data
     environment:
       - FLASK_ENV=production
-      - FLASK_APP=webapp/app.py
       - SECRET_KEY=${SECRET_KEY:-change-me-in-production}
-      - DATA_DIR=/opt/security-audit/data
+      - DATABASE_PATH=/opt/security-audit/data/webapp.db
       - SCAN_BASE_DIR=/var/security-scans
       - CONFIG_PATH=/opt/security-audit/config.json
       - BASE_PATH=/opt/security-audit
     depends_on:
-      scanner:
-        condition: service_healthy
+      - scanner
     restart: unless-stopped
     networks:
       - audit-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5005/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:5005/"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 60s
 
   # Scanning Engine
   scanner:
@@ -42,11 +37,13 @@ services:
     container_name: security-audit-scanner
     volumes:
       - scan-data:/var/security-scans
-      - ./data:/opt/security-audit/data
+      - app-data:/opt/security-audit/data
       - ./config.json:/opt/security-audit/config.json:ro
       - ./reporting:/opt/security-audit/reporting:ro
       - ./generate_report.py:/opt/security-audit/generate_report.py:ro
+      # Mount target VM nginx configs (adjust path as needed)
       - ${NGINX_CONFIG_PATH:-./target-vm-nginx}:/etc/nginx/sites-enabled:ro
+      # Mount Docker socket so scanner can run Docker containers (ZAP, Trivy, etc.)
       - /var/run/docker.sock:/var/run/docker.sock:ro
     environment:
       - CONFIG_PATH=/opt/security-audit/config.json
@@ -54,19 +51,14 @@ services:
       - TARGET_VM_IP=${TARGET_VM_IP:-}
       - TARGET_VM_SSH_KEY=${TARGET_VM_SSH_KEY:-}
       - BASE_PATH=/opt/security-audit
-      - DATA_DIR=/opt/security-audit/data
     networks:
       - audit-network
     restart: unless-stopped
-    privileged: true
-    healthcheck:
-      test: ["CMD", "pgrep", "-f", "python"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+    privileged: true  # Needed for nmap and some scanning tools
+    # On Mac Docker Desktop, use host.docker.internal to access host network
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    command: ["tail", "-f", "/dev/null"]
+    command: ["tail", "-f", "/dev/null"]  # Keep container running
 
   # OpenVAS/GVM Vulnerability Scanner
   openvas:
@@ -81,14 +73,8 @@ services:
       - audit-network
     environment:
       - TZ=${TZ:-UTC}
-    healthcheck:
-      test: ["CMD", "gvmd", "--status"]
-      interval: 60s
-      timeout: 30s
-      retries: 3
-      start_period: 300s
 
-  # Wazuh SIEM
+  # Wazuh SIEM (optional - can be enabled as needed)
   wazuh:
     image: wazuh/wazuh:${WAZUH_VERSION:-4.7.0}
     container_name: security-audit-wazuh
@@ -103,14 +89,8 @@ services:
     restart: unless-stopped
     networks:
       - audit-network
-    environment:
-      - TZ=${TZ:-UTC}
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:55000/"]
-      interval: 60s
-      timeout: 30s
-      retries: 3
-      start_period: 180s
+    profiles:
+      - full  # Only start with --profile full
 
   wazuh-dashboard:
     image: wazuh/wazuh-dashboard:${WAZUH_VERSION:-4.7.0}
@@ -121,21 +101,15 @@ services:
       - wazuh-dashboard-data:/usr/share/wazuh-dashboard/data
     environment:
       - OPENSEARCH_HOSTS=http://wazuh:55000
-      - TZ=${TZ:-UTC}
     depends_on:
-      wazuh:
-        condition: service_healthy
+      - wazuh
     restart: unless-stopped
     networks:
       - audit-network
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5601"]
-      interval: 60s
-      timeout: 30s
-      retries: 3
-      start_period: 60s
+    profiles:
+      - full  # Only start with --profile full
 
-  # HashiCorp Vault
+  # HashiCorp Vault (optional - for secrets management)
   vault:
     image: hashicorp/vault:${VAULT_VERSION:-1.15.2}
     container_name: security-audit-vault
@@ -148,21 +122,19 @@ services:
       - VAULT_DEV_ROOT_TOKEN_ID=${VAULT_ROOT_TOKEN:-dev-token}
       - VAULT_DEV_LISTEN_ADDRESS=0.0.0.0:8200
       - VAULT_ADDR=http://0.0.0.0:8200
-      - TZ=${TZ:-UTC}
     cap_add:
       - IPC_LOCK
     restart: unless-stopped
     networks:
       - audit-network
-    healthcheck:
-      test: ["CMD", "vault", "status"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+    profiles:
+      - full  # Only start with --profile full
     command: vault server -dev -dev-listen-address="0.0.0.0:8200"
 
 volumes:
   scan-data:
+    driver: local
+  app-data:
     driver: local
   openvas-data:
     driver: local
@@ -180,3 +152,4 @@ volumes:
 networks:
   audit-network:
     driver: bridge
+

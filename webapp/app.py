@@ -7,12 +7,20 @@ from functools import wraps
 import pyotp, os, json, datetime, subprocess, threading, time
 from werkzeug.security import generate_password_hash, check_password_hash
 
+# Update these lines (around line 10-15):
 BASE = os.environ.get('BASE_PATH', '/opt/security-audit')
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'change-me')
-database_path = os.environ.get('DATABASE_PATH', os.path.join(BASE, 'data', 'webapp.db'))
+
+# Ensure data directory exists
+DATA_DIR = os.environ.get('DATA_DIR', os.path.join(BASE, 'data'))
+os.makedirs(DATA_DIR, exist_ok=True)
+
+# Set database path
+database_path = os.path.join(DATA_DIR, 'webapp.db')
 app.config['SQLALCHEMY_DATABASE_URI'] = f"sqlite:///{database_path}"
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
 db = SQLAlchemy(app)
 login = LoginManager(app)
 login.login_view = 'login'
