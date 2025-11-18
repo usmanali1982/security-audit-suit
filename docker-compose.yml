@@ -60,7 +60,7 @@ services:
     restart: unless-stopped
     privileged: true
     healthcheck:
-      test: ["CMD", "pgrep", "-f", "python"]
+      test: ["CMD-SHELL", "pgrep -f 'tail -f /dev/null' > /dev/null 2>&1 || pgrep -f python > /dev/null 2>&1"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -90,7 +90,7 @@ services:
 
   # Wazuh SIEM
   wazuh:
-    image: wazuh/wazuh:${WAZUH_VERSION:-4.7.0}
+    image: wazuh/wazuh:4.7.0
     container_name: security-audit-wazuh
     hostname: wazuh-manager
     ports:
@@ -113,7 +113,7 @@ services:
       start_period: 180s
 
   wazuh-dashboard:
-    image: wazuh/wazuh-dashboard:${WAZUH_VERSION:-4.7.0}
+    image: wazuh/wazuh-dashboard:4.7.0
     container_name: security-audit-wazuh-dashboard
     ports:
       - "5601:5601"
