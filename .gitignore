@@ -24,6 +24,7 @@ build/
 *.log
 
 # Scan data
+data/
 scan-data/
 target-vm-nginx/
 *.scan

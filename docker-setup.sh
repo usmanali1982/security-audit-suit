@@ -56,6 +56,14 @@ JSON
     echo "✅ Created config.json"
 fi
 
+# Ensure the shared data directory exists and is writable
+if [ ! -d ./data ]; then
+    mkdir -p ./data
+    echo "📁 Created ./data directory for the SQLite database"
+fi
+
+chmod 777 ./data 2>/dev/null || true
+
 # Build Docker images
 echo ""
 echo "🔨 Building Docker images..."
