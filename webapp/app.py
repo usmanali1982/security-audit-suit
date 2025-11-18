@@ -12,6 +12,8 @@ app.config['SQLALCHEMY_DATABASE_URI'] = f"sqlite:///{database_path}"
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 login = LoginManager(app)
+login.login_view = 'login'
+login.login_message = 'Please log in to access this page.'
 
 class User(db.Model):
     id=db.Column(db.Integer, primary_key=True)
@@ -42,16 +44,32 @@ with app.app_context():
 
 @app.route('/login', methods=['GET','POST'])
 def login():
+    # If user is already logged in, redirect to index
+    if current_user.is_authenticated:
+        return redirect(url_for('index'))
+    
     if request.method=='POST':
-        u = User.query.filter_by(username=request.form['username']).first()
-        if u and u.check_password(request.form['password']):
+        username = request.form.get('username', '')
+        password = request.form.get('password', '')
+        token = request.form.get('token', '')
+        
+        u = User.query.filter_by(username=username).first()
+        if u and u.check_password(password):
             if u.mfa_enabled:
-                token = request.form.get('token','')
-                if not pyotp.TOTP(u.mfa_secret).verify(token):
-                    flash('Invalid MFA token'); return redirect(url_for('login'))
-            login_user(u)
-            return redirect(url_for('index'))
-        flash('Invalid credentials')
+                if not token:
+                    flash('MFA is enabled. Please enter your MFA token.')
+                    return render_template('login.html', username=username)
+                try:
+                    if not pyotp.TOTP(u.mfa_secret).verify(token, valid_window=1):
+                        flash('Invalid MFA token. Please try again.')
+                        return render_template('login.html', username=username)
+                except Exception as e:
+                    flash(f'MFA verification error: {str(e)}')
+                    return render_template('login.html', username=username)
+            login_user(u, remember=True)
+            next_page = request.args.get('next')
+            return redirect(next_page) if next_page else redirect(url_for('index'))
+        flash('Invalid username or password')
     return render_template('login.html')
 
 @app.route('/logout')

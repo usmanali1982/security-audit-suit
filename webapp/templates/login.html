@@ -1,9 +1,34 @@
-<!doctype html><html><head><title>Login</title></head><body>
-<h2>Login</h2>
-<form method="post">
-<input name="username" placeholder="username"/><br/>
-<input name="password" type="password" placeholder="password"/><br/>
-<input name="token" placeholder="MFA token"/><br/>
-<button type="submit">Login</button>
-</form>
-</body></html>
+<!doctype html>
+<html>
+<head>
+    <title>Security Audit Portal - Login</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 400px; margin: 100px auto; padding: 20px; }
+        h2 { color: #333; }
+        form { margin-top: 20px; }
+        input { width: 100%; padding: 10px; margin: 5px 0; box-sizing: border-box; }
+        button { width: 100%; padding: 10px; background: #007bff; color: white; border: none; cursor: pointer; margin-top: 10px; }
+        button:hover { background: #0056b3; }
+        .error { color: red; margin: 10px 0; }
+        .info { color: #666; font-size: 12px; margin-top: 5px; }
+    </style>
+</head>
+<body>
+    <h2>Security Audit Portal</h2>
+    <h3>Login</h3>
+    {% with messages = get_flashed_messages() %}
+        {% if messages %}
+            {% for message in messages %}
+                <div class="error">{{ message }}</div>
+            {% endfor %}
+        {% endif %}
+    {% endwith %}
+    <form method="post">
+        <input name="username" placeholder="Username" required autofocus value="{{ username or '' }}"/><br/>
+        <input name="password" type="password" placeholder="Password" required/><br/>
+        <input name="token" placeholder="MFA Token (if enabled)"/><br/>
+        <div class="info">Default: admin / ChangeMeNow!<br/>Note: MFA is enabled by default. You'll need an authenticator app to generate tokens.</div>
+        <button type="submit">Login</button>
+    </form>
+</body>
+</html>
