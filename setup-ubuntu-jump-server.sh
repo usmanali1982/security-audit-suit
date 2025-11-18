@@ -143,15 +143,19 @@ else
     echo "✅ Pulled OWASP ZAP (zaproxy/zap-stable)"
 fi
 
-# Trivy - might fail due to rate limiting, but will work on-demand
-if docker pull aquasecurity/trivy:latest 2>/dev/null; then
-    echo "✅ Pulled Trivy"
+# Trivy - try multiple image names
+if docker pull aquasec/trivy:latest 2>/dev/null; then
+    echo "✅ Pulled Trivy (aquasec/trivy)"
+elif docker pull aquasecurity/trivy:latest 2>/dev/null; then
+    echo "✅ Pulled Trivy (aquasecurity/trivy)"
 else
     echo "⚠️  Could not pull Trivy (will be pulled during scan if needed - may be rate limited)"
 fi
 
-# SQLMap - try both common names
-if docker pull paoloo/sqlmap:latest 2>/dev/null; then
+# SQLMap - try multiple image names based on actual available images
+if docker pull googlesky/sqlmap:latest 2>/dev/null; then
+    echo "✅ Pulled SQLMap (googlesky/sqlmap)"
+elif docker pull paoloo/sqlmap:latest 2>/dev/null; then
     echo "✅ Pulled SQLMap (paoloo/sqlmap)"
 elif docker pull sqlmapproject/sqlmap:latest 2>/dev/null; then
     echo "✅ Pulled SQLMap (sqlmapproject/sqlmap)"

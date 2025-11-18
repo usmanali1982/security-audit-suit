@@ -28,17 +28,8 @@ class User(db.Model):
 def load_user(uid):
     return User.query.get(int(uid))
 
-@app.before_first_request
-def create_admin():
-    db.create_all()
-    if not User.query.filter_by(username='admin').first():
-        u=User(username='admin', role='admin')
-        u.set_password('ChangeMeNow!')
-        u.mfa_secret=pyotp.random_base32()
-        u.mfa_enabled=True
-        db.session.add(u); db.session.commit()
-
-# Alternative approach for Flask 2.3+ compatibility
+# Initialize database and create admin user (Flask 2.3+ compatible)
+# @app.before_first_request is deprecated in Flask 2.2+, removed in Flask 2.3+
 with app.app_context():
     db.create_all()
     if not User.query.filter_by(username='admin').first():
@@ -46,7 +37,8 @@ with app.app_context():
         u.set_password('ChangeMeNow!')
         u.mfa_secret=pyotp.random_base32()
         u.mfa_enabled=True
-        db.session.add(u); db.session.commit()
+        db.session.add(u)
+        db.session.commit()
 
 @app.route('/login', methods=['GET','POST'])
 def login():

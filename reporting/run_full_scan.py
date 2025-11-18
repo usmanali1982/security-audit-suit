@@ -43,15 +43,38 @@ try:
                    stdout=open(os.path.join(OUT,"trivy-fs.json"),"w"), 
                    stderr=subprocess.DEVNULL, check=False, timeout=600)
 except (FileNotFoundError, subprocess.TimeoutExpired):
-    # Fallback to Docker Trivy
+    # Fallback to Docker Trivy - try multiple image names
     try:
         print("Using Trivy via Docker...")
-        docker_cmd = ["docker", "run", "--rm", "-v", f"{OUT}:/output:rw",
-                     "aquasecurity/trivy:latest", "fs", "--severity", "HIGH,CRITICAL",
-                     "--format", "json", "/"]
-        result = subprocess.run(docker_cmd, capture_output=True, text=True, timeout=600, check=False)
-        with open(os.path.join(OUT,"trivy-fs.json"),"w") as f:
-            f.write(result.stdout)
+        trivy_images = ["aquasec/trivy:latest", "aquasecurity/trivy:latest"]
+        trivy_image = None
+        
+        # Check if any Trivy image exists locally
+        for img in trivy_images:
+            result = subprocess.run(["docker", "images", "-q", img], 
+                                   capture_output=True, text=True, timeout=5)
+            if result.returncode == 0 and result.stdout.strip():
+                trivy_image = img
+                break
+        
+        # If not found, try to pull
+        if not trivy_image:
+            for img in trivy_images:
+                pull_result = subprocess.run(["docker", "pull", img], 
+                                            capture_output=True, stderr=subprocess.DEVNULL, timeout=60)
+                if pull_result.returncode == 0:
+                    trivy_image = img
+                    break
+        
+        if trivy_image:
+            docker_cmd = ["docker", "run", "--rm", "-v", f"{OUT}:/output:rw",
+                         trivy_image, "fs", "--severity", "HIGH,CRITICAL",
+                         "--format", "json", "/"]
+            result = subprocess.run(docker_cmd, capture_output=True, text=True, timeout=600, check=False)
+            with open(os.path.join(OUT,"trivy-fs.json"),"w") as f:
+                f.write(result.stdout)
+        else:
+            print("⚠️  Trivy Docker image not available")
     except Exception as e:
         print(f"Trivy scan failed: {e}")
 
