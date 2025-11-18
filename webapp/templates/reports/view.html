@@ -1,0 +1,46 @@
+{% extends "layout.html" %}
+{% block title %}Scan #{{ scan.id }} Report · Security Audit Suite{% endblock %}
+
+{% block content %}
+<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px;">
+    <h1 style="margin: 0;">Scan #{{ scan.id }}</h1>
+    <a class="btn btn-secondary" href="{{ url_for('index') }}">← Back to Dashboard</a>
+</div>
+
+<div class="grid grid-2" style="margin-bottom: 24px;">
+    <div class="card">
+        <p><strong>Type:</strong> {{ scan.scan_type|capitalize }}</p>
+        <p><strong>Status:</strong> {{ scan.status|capitalize }}</p>
+        <p><strong>Progress:</strong> {{ scan.progress }}%</p>
+        <p><strong>Host:</strong> {{ scan.host.hostname if scan.host else 'All Hosts' }}</p>
+    </div>
+    <div class="card">
+        <p><strong>Started:</strong> {{ scan.started_at if scan.started_at else '—' }}</p>
+        <p><strong>Completed:</strong> {{ scan.completed_at if scan.completed_at else '—' }}</p>
+        <p><strong>Current Task:</strong> {{ scan.current_task or '—' }}</p>
+        {% if scan.error_message %}
+            <p style="color: var(--danger);"><strong>Error:</strong> {{ scan.error_message }}</p>
+        {% endif %}
+    </div>
+</div>
+
+<div class="card">
+    <h2 style="margin-top: 0;">Generated Files</h2>
+    {% if files %}
+        <ul>
+            {% for file in files %}
+                <li>
+                    {% if report_subdir %}
+                        <a href="{{ url_for('download', scan=report_subdir, fn=file) }}">{{ file }}</a>
+                    {% else %}
+                        {{ file }}
+                    {% endif %}
+                </li>
+            {% endfor %}
+        </ul>
+    {% else %}
+        <div class="empty-state">No report artifacts found for this scan yet.</div>
+    {% endif %}
+</div>
+{% endblock %}
+

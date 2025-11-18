@@ -1,0 +1,46 @@
+{% extends "layout.html" %}
+{% block title %}Add Host · Security Audit Suite{% endblock %}
+
+{% block content %}
+<h1>Add Host</h1>
+
+<div class="card">
+    <form method="post">
+        <div>
+            <label for="hostname">Hostname</label>
+            <input id="hostname" name="hostname" required>
+        </div>
+
+        <div>
+            <label for="ip_address">IP Address</label>
+            <input id="ip_address" name="ip_address" required>
+        </div>
+
+        <div>
+            <label for="ssh_user">SSH User</label>
+            <input id="ssh_user" name="ssh_user" value="root" required>
+        </div>
+
+        <div>
+            <label for="ssh_port">SSH Port</label>
+            <input id="ssh_port" name="ssh_port" type="number" value="22" min="1" max="65535" required>
+        </div>
+
+        <div>
+            <label for="ssh_key_path">SSH Key Path (optional)</label>
+            <input id="ssh_key_path" name="ssh_key_path">
+        </div>
+
+        <div>
+            <label for="description">Description</label>
+            <textarea id="description" name="description" rows="3"></textarea>
+        </div>
+
+        <div style="display: flex; gap: 12px;">
+            <button class="btn btn-primary" type="submit">Save</button>
+            <a class="btn btn-secondary" href="{{ url_for('hosts') }}">Cancel</a>
+        </div>
+    </form>
+</div>
+{% endblock %}
+

@@ -1,0 +1,53 @@
+{% extends "layout.html" %}
+{% block title %}Users · Security Audit Suite{% endblock %}
+
+{% block content %}
+<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px;">
+    <h1 style="margin: 0;">Users</h1>
+    <a class="btn btn-primary" href="{{ url_for('create_user') }}">➕ Create User</a>
+</div>
+
+<div class="card">
+    {% if users %}
+        <div style="overflow-x: auto;">
+            <table>
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Username</th>
+                        <th>Role</th>
+                        <th>MFA</th>
+                        <th>Created</th>
+                        <th>Status</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for user in users %}
+                        <tr>
+                            <td>{{ user.id }}</td>
+                            <td>{{ user.username }}</td>
+                            <td>{{ user.role|capitalize }}</td>
+                            <td>{{ 'Enabled' if user.mfa_enabled else 'Disabled' }}</td>
+                            <td>{{ user.created_at.strftime('%Y-%m-%d') if user.created_at else '—' }}</td>
+                            <td>{{ 'Active' if user.is_active else 'Inactive' }}</td>
+                            <td>
+                                {% if user.id != current_user.id %}
+                                    <form action="{{ url_for('delete_user', user_id=user.id) }}" method="post" onsubmit="return confirm('Delete user {{ user.username }}?');">
+                                        <button class="btn btn-secondary" type="submit">Delete</button>
+                                    </form>
+                                {% else %}
+                                    <small style="color: var(--muted);">You</small>
+                                {% endif %}
+                            </td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% else %}
+        <div class="empty-state">No users found.</div>
+    {% endif %}
+</div>
+{% endblock %}
+

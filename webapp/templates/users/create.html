@@ -1,0 +1,39 @@
+{% extends "layout.html" %}
+{% block title %}Create User · Security Audit Suite{% endblock %}
+
+{% block content %}
+<h1>Create User</h1>
+
+<div class="card">
+    <form method="post">
+        <div>
+            <label for="username">Username</label>
+            <input id="username" name="username" required>
+        </div>
+
+        <div>
+            <label for="password">Password</label>
+            <input id="password" type="password" name="password" required>
+        </div>
+
+        <div>
+            <label for="role">Role</label>
+            <select id="role" name="role">
+                <option value="user">User</option>
+                <option value="admin">Admin</option>
+            </select>
+        </div>
+
+        <div style="display: flex; align-items: center; gap: 8px;">
+            <input type="checkbox" id="mfa_enabled" name="mfa_enabled">
+            <label for="mfa_enabled" style="margin: 0;">Enable MFA</label>
+        </div>
+
+        <div style="display: flex; gap: 12px;">
+            <button class="btn btn-primary" type="submit">Create</button>
+            <a class="btn btn-secondary" href="{{ url_for('users') }}">Cancel</a>
+        </div>
+    </form>
+</div>
+{% endblock %}
+

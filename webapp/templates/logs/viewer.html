@@ -1,0 +1,72 @@
+{% extends "layout.html" %}
+{% block title %}Logs · Security Audit Suite{% endblock %}
+
+{% block content %}
+<h1>Real-time Logs</h1>
+
+<div class="card">
+    <form id="log-form" style="margin-bottom: 16px;">
+        <div class="grid grid-2">
+            <div>
+                <label for="host_id">Host</label>
+                <select id="host_id" name="host_id">
+                    <option value="">All Hosts</option>
+                    {% for host in hosts %}
+                        <option value="{{ host.id }}">{{ host.hostname }} ({{ host.ip_address }})</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label for="log_type">Log Type</label>
+                <select id="log_type" name="log_type">
+                    {% for lt in log_types %}
+                        <option value="{{ lt }}">{{ lt|capitalize }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </div>
+        <label style="margin-top: 12px;">
+            <input type="checkbox" id="critical_only" name="critical_only">
+            Critical entries only
+        </label>
+        <button class="btn btn-primary" type="button" onclick="startStream()">Start Streaming</button>
+    </form>
+
+    <div id="log-output" style="background: #0f172a; color: #e2e8f0; padding: 16px; border-radius: 12px; min-height: 240px; font-family: 'SFMono-Regular', Consolas, monospace; white-space: pre-wrap;"></div>
+</div>
+
+<script>
+    let eventSource;
+
+    function startStream() {
+        if (eventSource) {
+            eventSource.close();
+        }
+
+        const hostId = document.getElementById('host_id').value;
+        const logType = document.getElementById('log_type').value;
+        const criticalOnly = document.getElementById('critical_only').checked;
+
+        const params = new URLSearchParams();
+        if (hostId) params.append('host_id', hostId);
+        params.append('log_type', logType);
+        params.append('critical_only', criticalOnly);
+
+        eventSource = new EventSource(`/api/logs/stream?${params.toString()}`);
+        const output = document.getElementById('log-output');
+        output.textContent = 'Connecting...\n';
+
+        eventSource.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            output.textContent += `[${new Date().toLocaleTimeString()}] ${data.message}\n`;
+            output.scrollTop = output.scrollHeight;
+        };
+
+        eventSource.onerror = () => {
+            output.textContent += 'Connection lost.\n';
+            eventSource.close();
+        };
+    }
+</script>
+{% endblock %}
+

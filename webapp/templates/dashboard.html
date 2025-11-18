@@ -1,0 +1,157 @@
+{% extends "layout.html" %}
+{% block title %}Dashboard · Security Audit Suite{% endblock %}
+
+{% block content %}
+<div class="grid grid-2" style="margin-bottom: 24px;">
+    <div class="card">
+        <h2 style="margin: 0 0 12px;">Scan Overview</h2>
+        {% if stats %}
+            <div class="grid grid-3">
+                <div>
+                    <p style="color: var(--muted); margin: 0;">Total Scans</p>
+                    <p style="font-size: 28px; font-weight: 600; margin: 4px 0;">{{ stats.total_scans }}</p>
+                </div>
+                <div>
+                    <p style="color: var(--muted); margin: 0;">Completed</p>
+                    <p style="font-size: 28px; font-weight: 600; color: var(--success); margin: 4px 0;">{{ stats.completed_scans }}</p>
+                </div>
+                <div>
+                    <p style="color: var(--muted); margin: 0;">Running</p>
+                    <p style="font-size: 28px; font-weight: 600; color: var(--warning); margin: 4px 0;">{{ stats.running_scans }}</p>
+                </div>
+            </div>
+            <div class="grid grid-3" style="margin-top: 12px;">
+                <div>
+                    <p style="color: var(--muted); margin: 0;">Failed</p>
+                    <p style="font-size: 28px; font-weight: 600; color: var(--danger); margin: 4px 0;">{{ stats.failed_scans }}</p>
+                </div>
+                <div>
+                    <p style="color: var(--muted); margin: 0;">Pending</p>
+                    <p style="font-size: 28px; font-weight: 600; margin: 4px 0;">{{ stats.pending_scans }}</p>
+                </div>
+                <div>
+                    <p style="color: var(--muted); margin: 0;">Active Hosts</p>
+                    <p style="font-size: 28px; font-weight: 600; margin: 4px 0;">{{ stats.total_hosts }}</p>
+                </div>
+            </div>
+        {% else %}
+            <p>No statistics available yet.</p>
+        {% endif %}
+    </div>
+
+    <div class="card">
+        <h2 style="margin: 0 0 12px;">Quick Actions</h2>
+        {% if current_user.is_admin() %}
+            <form method="post" action="{{ url_for('run_scan') }}">
+                <label for="scan_type">Scan Type</label>
+                <select name="scan_type" id="scan_type">
+                    <option value="full">Full Scan</option>
+                    <option value="network">Network Scan</option>
+                    <option value="web">Web Scan</option>
+                </select>
+
+                <label>Hosts</label>
+                {% if hosts %}
+                    <div style="max-height: 160px; overflow-y: auto; border: 1px solid var(--border); border-radius: 10px; padding: 12px;">
+                        {% for host in hosts %}
+                            <label style="display: flex; align-items: center; gap: 10px; font-weight: 400;">
+                                <input type="checkbox" name="host_ids" value="{{ host.id }}">
+                                <span>{{ host.hostname }} ({{ host.ip_address }})</span>
+                            </label>
+                        {% endfor %}
+                    </div>
+                    <small style="color: var(--muted); display: block; margin-top: 6px;">Leave blank to scan all active hosts.</small>
+                {% else %}
+                    <div class="empty-state" style="padding: 20px 0;">
+                        No active hosts. <a href="{{ url_for('create_host') }}">Add one</a>.
+                    </div>
+                {% endif %}
+
+                <button class="btn btn-primary" type="submit">🚀 Start Scan</button>
+            </form>
+        {% else %}
+            <p>You can view your recent scans below. Contact an administrator to request new scans.</p>
+        {% endif %}
+    </div>
+</div>
+
+<div class="card" style="margin-bottom: 24px;">
+    <div style="display: flex; justify-content: space-between; align-items: center;">
+        <h2 style="margin: 0;">Recent Scans</h2>
+        <small style="color: var(--muted);">Latest 100 records</small>
+    </div>
+    {% if scans %}
+        <div style="overflow-x: auto; margin-top: 12px;">
+            <table>
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Type</th>
+                        <th>Host</th>
+                        <th>Status</th>
+                        <th>Progress</th>
+                        <th>Created</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for scan in scans %}
+                        <tr>
+                            <td>#{{ scan.id }}</td>
+                            <td>{{ scan.scan_type|capitalize }}</td>
+                            <td>{{ scan.host.hostname if scan.host else 'All Hosts' }}</td>
+                            <td>
+                                <span style="font-weight: 600;
+                                             color:
+                                                {% if scan.status == 'completed' %}var(--success)
+                                                {% elif scan.status == 'failed' %}var(--danger)
+                                                {% elif scan.status == 'running' %}var(--warning)
+                                                {% else %}var(--muted){% endif %};
+                                ">
+                                    {{ scan.status|capitalize }}
+                                </span>
+                            </td>
+                            <td>{{ scan.progress }}%</td>
+                            <td>{{ scan.created_at.strftime('%Y-%m-%d %H:%M') if scan.created_at else '—' }}</td>
+                            <td>
+                                <a class="btn btn-secondary" href="{{ url_for('view_report', scan_id=scan.id) }}">Report</a>
+                            </td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% else %}
+        <div class="empty-state">
+            No scans yet. {% if current_user.is_admin() %}Use the form above to start one.{% endif %}
+        </div>
+    {% endif %}
+</div>
+
+{% if current_user.is_admin() and hosts %}
+    <div class="card">
+        <h2 style="margin-top: 0;">Managed Hosts</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Hostname</th>
+                    <th>IP</th>
+                    <th>SSH User</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for host in hosts %}
+                    <tr>
+                        <td>{{ host.hostname }}</td>
+                        <td>{{ host.ip_address }}</td>
+                        <td>{{ host.ssh_user }}</td>
+                        <td>{{ 'Active' if host.is_active else 'Disabled' }}</td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+{% endif %}
+{% endblock %}
+

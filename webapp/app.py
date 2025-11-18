@@ -577,13 +577,24 @@ def view_report(scan_id):
         return redirect(url_for('index'))
     
     base = os.environ.get('SCAN_BASE_DIR', '/var/security-scans')
-    report_path = scan.output_dir or os.path.join(base, 'ansible', str(scan_id), 'final_report')
+    report_root = scan.output_dir or os.path.join(base, 'ansible', str(scan_id))
+    report_path = os.path.join(report_root, 'final_report')
     
     files = []
+    download_subdir = None
+    
+    if not os.path.isdir(report_path) and os.path.isdir(report_root):
+        # Some older scans stored artifacts directly under output_dir
+        report_path = report_root
+    
     if os.path.isdir(report_path):
         files = [f for f in os.listdir(report_path) if f.endswith(('.html', '.pdf', '.json'))]
+        if report_root.startswith(base):
+            download_subdir = os.path.relpath(report_root, base)
+        else:
+            download_subdir = report_root
     
-    return render_template('reports/view.html', scan=scan, files=files)
+    return render_template('reports/view.html', scan=scan, files=files, report_subdir=download_subdir)
 
 # Legacy reports route for backward compatibility
 @app.route('/reports/<scan>')
@@ -636,7 +647,7 @@ def log_stream():
     
     return Response(stream_with_context(generate()), mimetype='text/event-stream')
 
-@app.route('/download/<scan>/<fn>')
+@app.route('/download/<path:scan>/<fn>')
 @login_required
 def download(scan, fn):
     base = os.environ.get('SCAN_BASE_DIR', '/var/security-scans')

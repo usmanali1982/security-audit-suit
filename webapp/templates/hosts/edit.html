@@ -1,0 +1,51 @@
+{% extends "layout.html" %}
+{% block title %}Edit Host · Security Audit Suite{% endblock %}
+
+{% block content %}
+<h1>Edit Host</h1>
+
+<div class="card">
+    <form method="post">
+        <div>
+            <label for="hostname">Hostname</label>
+            <input id="hostname" name="hostname" value="{{ host.hostname }}" required>
+        </div>
+
+        <div>
+            <label for="ip_address">IP Address</label>
+            <input id="ip_address" name="ip_address" value="{{ host.ip_address }}" required>
+        </div>
+
+        <div>
+            <label for="ssh_user">SSH User</label>
+            <input id="ssh_user" name="ssh_user" value="{{ host.ssh_user }}" required>
+        </div>
+
+        <div>
+            <label for="ssh_port">SSH Port</label>
+            <input id="ssh_port" name="ssh_port" type="number" value="{{ host.ssh_port }}" min="1" max="65535" required>
+        </div>
+
+        <div>
+            <label for="ssh_key_path">SSH Key Path</label>
+            <input id="ssh_key_path" name="ssh_key_path" value="{{ host.ssh_key_path or '' }}">
+        </div>
+
+        <div>
+            <label for="description">Description</label>
+            <textarea id="description" name="description" rows="3">{{ host.description or '' }}</textarea>
+        </div>
+
+        <div style="display: flex; align-items: center; gap: 8px;">
+            <input type="checkbox" id="is_active" name="is_active" {% if host.is_active %}checked{% endif %}>
+            <label for="is_active" style="margin: 0;">Active</label>
+        </div>
+
+        <div style="display: flex; gap: 12px;">
+            <button class="btn btn-primary" type="submit">Update</button>
+            <a class="btn btn-secondary" href="{{ url_for('hosts') }}">Cancel</a>
+        </div>
+    </form>
+</div>
+{% endblock %}
+
