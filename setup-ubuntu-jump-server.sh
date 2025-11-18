@@ -127,13 +127,44 @@ else
     exit 1
 fi
 
-# Pull additional scanner images
+# Pull additional scanner images (optional - will be pulled on-demand during scans if not available)
 echo ""
-echo "📥 Pulling scanner Docker images..."
-docker pull owasp/zap2docker-stable:latest || echo "⚠️  Could not pull OWASP ZAP"
-docker pull sqlmapproject/sqlmap:latest || echo "⚠️  Could not pull SQLMap"
-docker pull aquasecurity/trivy:latest || echo "⚠️  Could not pull Trivy"
-docker pull wpscanteam/wpscan:latest || echo "⚠️  Could not pull WPScan"
+echo "📥 Pulling scanner Docker images (optional - will be pulled during scans if needed)..."
+echo "   Note: If images fail to pull, they'll be downloaded automatically during scan execution."
+
+# Try new OWASP ZAP image (zaproxy/zap-stable) first, fallback to old name
+if ! docker pull zaproxy/zap-stable:latest 2>/dev/null; then
+    if ! docker pull owasp/zap2docker-stable:latest 2>/dev/null; then
+        echo "⚠️  Could not pull OWASP ZAP (will be pulled during scan if needed)"
+    else
+        echo "✅ Pulled OWASP ZAP (legacy image)"
+    fi
+else
+    echo "✅ Pulled OWASP ZAP (zaproxy/zap-stable)"
+fi
+
+# Trivy - might fail due to rate limiting, but will work on-demand
+if docker pull aquasecurity/trivy:latest 2>/dev/null; then
+    echo "✅ Pulled Trivy"
+else
+    echo "⚠️  Could not pull Trivy (will be pulled during scan if needed - may be rate limited)"
+fi
+
+# SQLMap - try both common names
+if docker pull paoloo/sqlmap:latest 2>/dev/null; then
+    echo "✅ Pulled SQLMap (paoloo/sqlmap)"
+elif docker pull sqlmapproject/sqlmap:latest 2>/dev/null; then
+    echo "✅ Pulled SQLMap (sqlmapproject/sqlmap)"
+else
+    echo "⚠️  Could not pull SQLMap (optional - used for SQL injection testing)"
+fi
+
+# WPScan
+if docker pull wpscanteam/wpscan:latest 2>/dev/null; then
+    echo "✅ Pulled WPScan"
+else
+    echo "⚠️  Could not pull WPScan (optional - used for WordPress scanning)"
+fi
 
 # Set proper permissions
 chmod +x scan.sh docker-setup.sh 2>/dev/null || true

@@ -81,9 +81,30 @@ with open(domains_file) as f:
         # zap baseline via docker (if docker available)
         try:
             # Check if we're in a container with docker socket or have docker CLI
+            # Try new image name first (zaproxy/zap-stable), fallback to old name
+            zap_images = ["zaproxy/zap-stable", "owasp/zap2docker-stable"]
+            zap_image = None
+            for img in zap_images:
+                # Check if image exists locally, if not try to pull
+                result = subprocess.run(["docker", "images", "-q", img], 
+                                       capture_output=True, text=True, timeout=5)
+                if result.returncode == 0 and result.stdout.strip():
+                    zap_image = img
+                    break
+                # Try to pull if not available
+                pull_result = subprocess.run(["docker", "pull", img], 
+                                            capture_output=True, stderr=subprocess.DEVNULL, timeout=60)
+                if pull_result.returncode == 0:
+                    zap_image = img
+                    break
+            
+            if not zap_image:
+                print(f"⚠️  ZAP image not available, skipping ZAP scan for {d}")
+                continue
+                
             docker_cmd = ["docker", "run", "--rm", "--network", "host", 
                          "-v", f"{zap_out}:/zap/wrk:rw",
-                         "owasp/zap2docker-stable", 
+                         zap_image, 
                          "zap-baseline.py", "-t", f"http://{d}", 
                          "-r", f"{safe}-baseline.html", 
                          "-J", f"{safe}-baseline.json", 
