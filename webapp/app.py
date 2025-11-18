@@ -1,6 +1,7 @@
 from flask import Flask, render_template, request, redirect, url_for, flash, send_file
 import traceback
 from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy import text as db_text
 from flask_login import LoginManager, login_user, login_required, logout_user, current_user
 import pyotp, os, json, datetime, subprocess
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -46,20 +47,64 @@ def load_user(uid):
 # @app.before_first_request is deprecated in Flask 2.2+, removed in Flask 2.3+
 with app.app_context():
     db.create_all()
-    if not User.query.filter_by(username='admin').first():
-        u=User(username='admin', role='admin', is_active=True)
-        u.set_password('ChangeMeNow!')
-        u.mfa_secret=pyotp.random_base32()
-        u.mfa_enabled=True
-        db.session.add(u)
-        db.session.commit()
-    else:
-        # Update existing admin user to ensure is_active is set
-        admin_user = User.query.filter_by(username='admin').first()
-        if admin_user:
-            if not hasattr(admin_user, 'is_active') or admin_user.is_active is None:
-                admin_user.is_active = True
+    
+    # Migrate existing database: Add is_active column if it doesn't exist
+    # This MUST run before any User queries to avoid column errors
+    try:
+        # Check if table exists first
+        result = db.session.execute(db_text("SELECT name FROM sqlite_master WHERE type='table' AND name='user'"))
+        table_exists = result.fetchone() is not None
+        
+        if table_exists:
+            # Try to query - if column doesn't exist, this will fail
+            try:
+                db.session.execute(db_text("SELECT is_active FROM user LIMIT 1"))
+                print("is_active column exists")
+            except Exception:
+                # Column doesn't exist, add it
+                try:
+                    print("Adding is_active column to user table...")
+                    db.session.execute(db_text("ALTER TABLE user ADD COLUMN is_active BOOLEAN DEFAULT 1"))
+                    db.session.commit()
+                    print("Successfully added is_active column")
+                except Exception as e:
+                    print(f"Error adding is_active column: {e}")
+                    db.session.rollback()
+    except Exception as e:
+        print(f"Error checking/adding is_active column: {e}")
+        db.session.rollback()
+    
+    # Create or update admin user (AFTER migration)
+    try:
+        # Use raw SQL to check if admin exists (safer than ORM if schema changed)
+        try:
+            result = db.session.execute(db_text("SELECT COUNT(*) FROM user WHERE username = 'admin'"))
+            admin_exists = result.scalar() > 0
+        except Exception:
+            admin_exists = False
+        
+        if not admin_exists:
+            # Create new admin user
+            db.session.execute(db_text(
+                "INSERT INTO user (username, password_hash, role, mfa_secret, mfa_enabled, is_active) "
+                "VALUES ('admin', :pwd, 'admin', :secret, 1, 1)"
+            ), {
+                'pwd': generate_password_hash('ChangeMeNow!'),
+                'secret': pyotp.random_base32()
+            })
+            db.session.commit()
+            print("Created admin user")
+        else:
+            # Update existing admin user to ensure is_active is set
+            try:
+                db.session.execute(db_text("UPDATE user SET is_active = 1 WHERE username = 'admin' AND (is_active IS NULL OR is_active = 0)"))
                 db.session.commit()
+            except Exception as e:
+                print(f"Note: Could not update admin user is_active: {e}")
+                # If update fails, continue anyway - might already be set
+    except Exception as e:
+        print(f"Error creating/updating admin user: {e}")
+        db.session.rollback()
 
 @app.route('/login', methods=['GET','POST'])
 def login():
