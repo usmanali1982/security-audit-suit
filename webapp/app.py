@@ -23,9 +23,20 @@ class User(db.Model):
     role=db.Column(db.String(20), default="user")
     mfa_secret=db.Column(db.String(32), nullable=True)
     mfa_enabled=db.Column(db.Boolean, default=False)
+    is_active=db.Column(db.Boolean, default=True)  # Required by Flask-Login
+    
     def set_password(self,p): self.password_hash=generate_password_hash(p)
     def check_password(self,p): return check_password_hash(self.password_hash,p)
     def get_id(self): return str(self.id)
+    
+    # Flask-Login compatibility methods
+    @property
+    def is_authenticated(self):
+        return True
+    
+    @property
+    def is_anonymous(self):
+        return False
 
 @login.user_loader
 def load_user(uid):
@@ -36,12 +47,19 @@ def load_user(uid):
 with app.app_context():
     db.create_all()
     if not User.query.filter_by(username='admin').first():
-        u=User(username='admin', role='admin')
+        u=User(username='admin', role='admin', is_active=True)
         u.set_password('ChangeMeNow!')
         u.mfa_secret=pyotp.random_base32()
         u.mfa_enabled=True
         db.session.add(u)
         db.session.commit()
+    else:
+        # Update existing admin user to ensure is_active is set
+        admin_user = User.query.filter_by(username='admin').first()
+        if admin_user:
+            if not hasattr(admin_user, 'is_active') or admin_user.is_active is None:
+                admin_user.is_active = True
+                db.session.commit()
 
 @app.route('/login', methods=['GET','POST'])
 def login():
