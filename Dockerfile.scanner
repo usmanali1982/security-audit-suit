@@ -1,0 +1,76 @@
+FROM debian:bookworm-slim
+
+LABEL maintainer="Security Audit Suite"
+LABEL description="Security scanning engine with all required tools"
+
+# Install system dependencies and scanning tools
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
+    curl \
+    wget \
+    git \
+    unzip \
+    jq \
+    python3 \
+    python3-pip \
+    python3-venv \
+    nmap \
+    nikto \
+    lynis \
+    clamav \
+    rkhunter \
+    chkrootkit \
+    openjdk-11-jre-headless \
+    docker.io \
+    docker-compose \
+    ca-certificates \
+    gnupg2 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Docker CLI (for using docker to run scanner containers)
+RUN curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg && \
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/debian $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null && \
+    apt-get update && apt-get install -y docker-ce-cli && rm -rf /var/lib/apt/lists/*
+
+# Create directories
+RUN mkdir -p /opt/security-audit/data \
+    /var/security-scans \
+    /opt/security-audit/reporting \
+    /opt/security-audit/tools
+
+# Create Python virtual environment
+RUN python3 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Copy requirements
+COPY requirements-scanner.txt /tmp/requirements.txt
+
+# Install Python dependencies
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r /tmp/requirements.txt
+
+# Copy scanning scripts
+COPY reporting/run_full_scan.py /opt/security-audit/reporting/run_full_scan.py
+COPY generate_report.py /opt/security-audit/generate_report.py
+COPY scan.sh /opt/security-audit/scan.sh
+
+# Make scripts executable
+RUN chmod +x /opt/security-audit/scan.sh \
+    /opt/security-audit/reporting/run_full_scan.py \
+    /opt/security-audit/generate_report.py
+
+# Update ClamAV database (may take time, optional)
+RUN freshclam || echo "ClamAV update skipped"
+
+# Create non-root user (scanner needs root for some tools, but we'll use sudo)
+RUN useradd -m -u 1001 scanner && \
+    chown -R scanner:scanner /opt/security-audit /var/security-scans
+
+# Note: Some tools require root privileges (nmap, rkhunter, etc.)
+# We'll run the container with necessary capabilities or as root for scanning
+USER root
+
+WORKDIR /opt/security-audit
+
+# Default command keeps container running
+CMD ["tail", "-f", "/dev/null"]
+

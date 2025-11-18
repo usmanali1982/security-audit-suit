@@ -1,0 +1,12 @@
+<!doctype html><html><head><title>Portal</title></head><body>
+<h1>Audit Portal</h1>
+<p>Welcome, use Run Scan to start a new scan.</p>
+<form action="/run_scan" method="post"><button type="submit">Run Scan</button></form>
+<h3>Recent scans</h3>
+<ul>
+{% for s in scans %}
+  <li><a href="/reports/{{s}}">{{ s }}</a></li>
+{% endfor %}
+</ul>
+<a href="/logout">Logout</a>
+</body></html>

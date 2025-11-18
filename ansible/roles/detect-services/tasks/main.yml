@@ -1,0 +1,18 @@
+---
+- name: detect nginx
+  shell: 'which nginx || true'
+  register: nginx_path
+  changed_when: false
+
+- name: set nginx_installed
+  set_fact:
+    nginx_installed: "{{ nginx_path.stdout != '' }}"
+
+- name: detect mongodb
+  shell: 'ss -tunlp | grep mongod || true'
+  register: mongo_path
+  changed_when: false
+
+- name: set mongodb_installed
+  set_fact:
+    mongodb_installed: "{{ mongo_path.stdout != '' }}"

@@ -1,0 +1,19 @@
+---
+- name: Harden nginx if installed
+  when: nginx_installed | default(false)
+  block:
+    - name: install nginx
+      apt:
+        name: nginx
+        state: present
+    - name: copy hardening conf
+      copy:
+        dest: /etc/nginx/conf.d/hardening-global.conf
+        content: |
+          ssl_protocols TLSv1.2 TLSv1.3;
+          server_tokens off;
+          add_header X-Frame-Options DENY;
+    - name: restart nginx
+      service:
+        name: nginx
+        state: restarted

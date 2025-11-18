@@ -1,0 +1,26 @@
+---
+- name: Update apt and install baseline packages
+  apt:
+    name: [ufw,fail2ban,lynis,aide,auditd]
+    state: present
+    update_cache: yes
+
+- name: Configure UFW basic rules
+  ufw:
+    rule: allow
+    name: OpenSSH
+
+- name: copy sysctl hardening
+  copy:
+    dest: /etc/sysctl.d/99-hardening.conf
+    content: |
+      net.ipv4.ip_forward = 0
+      net.ipv4.conf.all.rp_filter = 1
+      net.ipv4.tcp_syncookies = 1
+  notify: reload sysctl
+
+- name: ensure auditd running
+  service:
+    name: auditd
+    state: started
+    enabled: yes

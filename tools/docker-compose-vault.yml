@@ -1,0 +1,12 @@
+version: '3.7'
+services:
+  vault:
+    image: vault:1.14.0
+    container_name: vault
+    ports:
+      - "8200:8200"
+    environment:
+      VAULT_ADDR: https://0.0.0.0:8200
+    volumes:
+      - ./vault-data:/vault/data
+    command: server -config=/vault/config/local.json

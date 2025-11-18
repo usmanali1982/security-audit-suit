@@ -1,0 +1,11 @@
+{
+  "out_dir_base": "/var/security-scans",
+  "nginx_sites_enabled": "/etc/nginx/sites-enabled",
+  "zap": { "use_active_scan": false },
+  "slack": { "webhook_url": "" },
+  "smtp": { "host":"", "port":587, "username":"", "password":"", "from":"", "to":[""] },
+  "zip_reports": true,
+  "openvas_enabled": true,
+  "vault": { "mode": "production", "addr": "http://vault:8200" },
+  "wazuh": { "deploy_manager": true }
+}

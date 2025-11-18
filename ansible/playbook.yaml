@@ -1,0 +1,8 @@
+- name: Secure fleet
+  hosts: all
+  become: yes
+  roles:
+    - role: detect-services
+    - role: harden-linux
+    - role: harden-nginx
+    - role: harden-mongodb

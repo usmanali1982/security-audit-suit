@@ -1,0 +1,10 @@
+version: '3'
+services:
+  gvm:
+    image: securecompliance/gvm
+    container_name: gvm
+    restart: unless-stopped
+    ports:
+      - "9392:9392"
+    volumes:
+      - ./gvm-data:/data
