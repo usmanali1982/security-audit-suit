@@ -117,7 +117,15 @@ fi
 # Build Docker images
 echo ""
 echo "🔨 Building Docker images (this may take a few minutes)..."
-docker compose build --pull || docker-compose build --pull
+# Try docker compose (v2) first, then docker-compose (v1), without --pull flag which may not be supported
+if docker compose version &> /dev/null; then
+    docker compose build || docker compose build --no-cache
+elif docker-compose version &> /dev/null; then
+    docker-compose build || docker-compose build --no-cache
+else
+    echo "❌ Neither 'docker compose' nor 'docker-compose' is available"
+    exit 1
+fi
 
 # Pull additional scanner images
 echo ""

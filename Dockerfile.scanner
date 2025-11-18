@@ -14,19 +14,32 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
     python3-pip \
     python3-venv \
     nmap \
-    nikto \
     lynis \
     clamav \
     rkhunter \
     chkrootkit \
-    openjdk-11-jre-headless \
-    docker.io \
-    docker-compose \
+    openjdk-17-jre-headless \
     ca-certificates \
     gnupg2 \
+    lsb-release \
     && rm -rf /var/lib/apt/lists/*
 
+# Install nikto (try package first, fallback to source install)
+RUN apt-get update && (DEBIAN_FRONTEND=noninteractive apt-get install -y nikto 2>/dev/null || \
+    (echo "⚠️  nikto not in repos, installing from source..." && \
+     cd /tmp && \
+     wget -q https://github.com/sullo/nikto/archive/master.zip && \
+     unzip -q master.zip && \
+     mkdir -p /usr/local/bin && \
+     cp nikto-master/program/nikto.pl /usr/local/bin/nikto && \
+     chmod +x /usr/local/bin/nikto && \
+     # Install perl dependencies for nikto
+     apt-get install -y perl libwww-perl liblwp-protocol-https-perl || true && \
+     rm -rf nikto-master master.zip)) && \
+    rm -rf /var/lib/apt/lists/*
+
 # Install Docker CLI (for using docker to run scanner containers)
+# Note: We don't install docker-compose as a package, we use docker compose (plugin) via mounted socket
 RUN curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg && \
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/debian $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null && \
     apt-get update && apt-get install -y docker-ce-cli && rm -rf /var/lib/apt/lists/*
