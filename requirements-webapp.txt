@@ -17,4 +17,6 @@ passlib[bcrypt]==1.7.4
 pyjwt==2.8.0
 apscheduler==3.10.4
 werkzeug==2.3.7
+ansible==8.6.0
+pyyaml==6.0.1
 

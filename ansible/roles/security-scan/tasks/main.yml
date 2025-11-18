@@ -1,0 +1,53 @@
+---
+- name: Ensure scan directory exists
+  file:
+    path: /opt/security-audit
+    state: directory
+    mode: '0755'
+
+- name: Copy scan script to target
+  copy:
+    src: "{{ playbook_dir }}/../../reporting/run_full_scan.py"
+    dest: /opt/security-audit/reporting/run_full_scan.py
+    mode: '0755'
+  when: scan_type == 'full' or scan_type == 'linux' or scan_type == 'nginx'
+
+- name: Copy report generator to target
+  copy:
+    src: "{{ playbook_dir }}/../../generate_report.py"
+    dest: /opt/security-audit/generate_report.py
+    mode: '0755'
+  when: scan_type == 'full' or scan_type == 'linux' or scan_type == 'nginx'
+
+- name: Copy config.json to target
+  copy:
+    src: "{{ playbook_dir }}/../../config.json"
+    dest: /opt/security-audit/config.json
+    mode: '0644'
+  when: scan_type == 'full' or scan_type == 'linux' or scan_type == 'nginx'
+
+- name: Run Linux security scan
+  command: python3 /opt/security-audit/reporting/run_full_scan.py --config /opt/security-audit/config.json --scan-type linux
+  args:
+    chdir: /opt/security-audit
+  register: scan_result
+  when: scan_type == 'linux' or scan_type == 'full'
+  async: 3600
+  poll: 10
+
+- name: Run Nginx security scan
+  command: python3 /opt/security-audit/reporting/run_full_scan.py --config /opt/security-audit/config.json --scan-type nginx
+  args:
+    chdir: /opt/security-audit
+  register: nginx_scan_result
+  when: (scan_type == 'nginx' or scan_type == 'full') and nginx_installed | default(false)
+  async: 3600
+  poll: 10
+
+- name: Fetch scan results
+  fetch:
+    src: /var/security-scans/{{ scan_output_dir }}/final_report/
+    dest: "{{ scan_results_path }}/{{ inventory_hostname }}/"
+    flat: yes
+  when: scan_result is defined and scan_result.rc == 0
+

@@ -1,0 +1,13 @@
+---
+- name: Security Scan Playbook
+  hosts: "{{ target_hosts | default('all') }}"
+  become: yes
+  vars:
+    scan_type: "{{ scan_type | default('full') }}"
+    scan_output_dir: "{{ scan_output_dir | default(ansible_date_time.epoch) }}"
+    scan_results_path: "{{ scan_results_path | default('/tmp/ansible-scan-results') }}"
+  
+  roles:
+    - role: detect-services
+    - role: security-scan
+
