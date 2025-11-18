@@ -1,4 +1,5 @@
 from flask import Flask, render_template, request, redirect, url_for, flash, send_file
+import traceback
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, login_user, login_required, logout_user, current_user
 import pyotp, os, json, datetime, subprocess
@@ -82,8 +83,26 @@ def logout():
 @login_required
 def index():
     base = os.environ.get('SCAN_BASE_DIR', '/var/security-scans')
-    scans = sorted(os.listdir(base)) if os.path.isdir(base) else []
-    return render_template('index.html', scans=scans)
+    scans = []
+    try:
+        # Create directory if it doesn't exist
+        os.makedirs(base, exist_ok=True)
+        # Get list of scans with error handling
+        if os.path.isdir(base):
+            try:
+                all_items = os.listdir(base)
+                # Filter only directories, exclude files
+                scans = [s for s in all_items if os.path.isdir(os.path.join(base, s))]
+                # Sort by name (timestamp) descending - most recent first
+                scans = sorted(scans, reverse=True)
+            except PermissionError:
+                flash('Permission denied: Cannot read scan directory', 'error')
+            except Exception as e:
+                flash(f'Error listing scans: {str(e)}', 'error')
+    except Exception as e:
+        app.logger.error(f'Error in index route: {traceback.format_exc()}')
+        flash(f'Error accessing scan directory: {str(e)}', 'error')
+    return render_template('index.html', scans=scans, current_user=current_user)
 
 @app.route('/run_scan', methods=['POST'])
 @login_required
@@ -130,6 +149,17 @@ def download(scan, fn):
     p = os.path.join(base, scan, 'final_report', fn)
     if os.path.exists(p): return send_file(p)
     return "Not found", 404
+
+@app.errorhandler(500)
+def internal_error(error):
+    db.session.rollback()
+    error_msg = traceback.format_exc()
+    app.logger.error(f'Internal server error: {error_msg}')
+    return f'<h1>Internal Server Error</h1><p>An error occurred. Please check the logs.</p><pre style="background:#f0f0f0;padding:10px;border-radius:5px;">{error_msg}</pre><br><a href="/">Go to Dashboard</a>', 500
+
+@app.errorhandler(404)
+def not_found(error):
+    return '<h1>Page Not Found</h1><p>The page you are looking for does not exist.</p><br><a href="/">Go to Dashboard</a>', 404
 
 if __name__=='__main__':
     host = os.environ.get('FLASK_HOST', '0.0.0.0')
