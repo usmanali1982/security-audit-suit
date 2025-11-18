@@ -111,20 +111,42 @@ with app.app_context():
         user_table_exists = result.fetchone() is not None
         
         if user_table_exists:
-            # Migrate user table
+            # Check and add missing columns to user table
             try:
-                db.session.execute(db_text("SELECT is_active FROM user LIMIT 1"))
-                print("User table schema up to date")
-            except Exception:
-                try:
-                    print("Migrating user table...")
-                    db.session.execute(db_text("ALTER TABLE user ADD COLUMN is_active BOOLEAN DEFAULT 1"))
-                    db.session.execute(db_text("ALTER TABLE user ADD COLUMN created_at DATETIME"))
-                    db.session.commit()
-                    print("User table migration complete")
-                except Exception as e:
-                    print(f"User migration error: {e}")
-                    db.session.rollback()
+                # Get current table info
+                columns = db.session.execute(db_text("PRAGMA table_info(user)")).fetchall()
+                column_names = [col[1] for col in columns]
+                
+                # List of required columns and their definitions
+                required_columns = {
+                    'is_active': 'BOOLEAN DEFAULT 1',
+                    'created_at': 'DATETIME DEFAULT CURRENT_TIMESTAMP'
+                }
+                
+                # Check for missing columns
+                migrations = []
+                for col, col_type in required_columns.items():
+                    if col not in column_names:
+                        migrations.append(f"ADD COLUMN {col} {col_type}")
+                
+                # Apply migrations if needed
+                if migrations:
+                    print(f"Migrating user table: {', '.join(migrations)}")
+                    for migration in migrations:
+                        try:
+                            db.session.execute(db_text(f"ALTER TABLE user {migration}"))
+                            db.session.commit()
+                            print(f"Successfully added column: {migration.split()[2]}")
+                        except Exception as e:
+                            print(f"Error adding column: {migration}. Error: {e}")
+                            db.session.rollback()
+                            raise
+                else:
+                    print("User table schema is up to date")
+                    
+            except Exception as e:
+                print(f"User table migration error: {e}")
+                db.session.rollback()
         
         # Check for new tables
         tables_result = db.session.execute(db_text("SELECT name FROM sqlite_master WHERE type='table'")).fetchall()
