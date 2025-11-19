@@ -1,0 +1,104 @@
+{% extends "layout.html" %}
+{% block title %}MFA Setup · Security Audit Suite{% endblock %}
+
+{% block content %}
+<div style="max-width: 600px; margin: 0 auto;">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px;">
+        <h1 style="margin: 0;">MFA Setup for {{ user.username }}</h1>
+        <a class="btn btn-secondary" href="{{ url_for('users') if current_user.is_admin() else url_for('index') }}">← Back</a>
+    </div>
+
+    {% with messages = get_flashed_messages() %}
+        {% if messages %}
+            <div style="margin-bottom: 24px;">
+                {% for message in messages %}
+                    <div class="alert alert-{{ 'success' if 'success' in message.lower() else 'error' }}" style="margin-bottom: 12px;">
+                        {{ message }}
+                    </div>
+                {% endfor %}
+            </div>
+        {% endif %}
+    {% endwith %}
+
+    <div class="card">
+        {% if user.mfa_enabled %}
+            <div style="text-align: center; padding: 24px;">
+                <div style="color: var(--success); font-size: 48px; margin-bottom: 16px;">✓</div>
+                <h2 style="margin: 0 0 8px 0;">MFA is Enabled</h2>
+                <p style="color: var(--muted); margin: 0 0 24px 0;">Multi-factor authentication is active for this account.</p>
+                <form action="{{ url_for('mfa_regenerate', user_id=user.id) }}" method="post" onsubmit="return confirm('Regenerating will disable MFA. You will need to set it up again. Continue?');">
+                    <button class="btn btn-secondary" type="submit">Regenerate Secret</button>
+                </form>
+            </div>
+        {% else %}
+            <div style="padding: 24px;">
+                <h2 style="margin: 0 0 16px 0;">Step 1: Scan QR Code</h2>
+                <p style="color: var(--muted); margin-bottom: 24px;">
+                    Open your authenticator app (Google Authenticator, Authy, Microsoft Authenticator, etc.) and scan this QR code:
+                </p>
+                
+                <div style="text-align: center; padding: 24px; background: #f8f9fa; border-radius: 8px; margin-bottom: 24px;">
+                    <img src="data:image/png;base64,{{ qr_code }}" alt="MFA QR Code" style="max-width: 300px; width: 100%; height: auto; border: 2px solid var(--border); border-radius: 8px; padding: 12px; background: white;">
+                </div>
+
+                <div style="background: #f8f9fa; padding: 16px; border-radius: 8px; margin-bottom: 24px;">
+                    <p style="margin: 0 0 8px 0; font-weight: 600;">Or enter this code manually:</p>
+                    <code style="font-size: 18px; letter-spacing: 2px; color: var(--primary); background: white; padding: 12px; border-radius: 6px; display: block; text-align: center; border: 1px solid var(--border);">{{ secret }}</code>
+                </div>
+
+                <h2 style="margin: 32px 0 16px 0;">Step 2: Verify Setup</h2>
+                <p style="color: var(--muted); margin-bottom: 16px;">
+                    Enter the 6-digit code from your authenticator app to verify and enable MFA:
+                </p>
+
+                <form action="{{ url_for('mfa_verify', user_id=user.id) }}" method="post">
+                    <div style="margin-bottom: 16px;">
+                        <label for="token" style="display: block; margin-bottom: 8px; font-weight: 600;">Verification Code</label>
+                        <input 
+                            type="text" 
+                            id="token" 
+                            name="token" 
+                            placeholder="000000" 
+                            maxlength="6" 
+                            pattern="[0-9]{6}"
+                            required
+                            autocomplete="off"
+                            style="width: 100%; padding: 12px; font-size: 18px; text-align: center; letter-spacing: 4px; border: 2px solid var(--border); border-radius: 6px; font-family: monospace;"
+                            autofocus>
+                        <small style="color: var(--muted); display: block; margin-top: 8px;">
+                            Enter the 6-digit code from your authenticator app
+                        </small>
+                    </div>
+                    <button class="btn btn-primary" type="submit" style="width: 100%;">Verify and Enable MFA</button>
+                </form>
+
+                <div style="margin-top: 24px; padding-top: 24px; border-top: 1px solid var(--border);">
+                    <form action="{{ url_for('mfa_regenerate', user_id=user.id) }}" method="post" onsubmit="return confirm('Generate a new secret? This will invalidate the current QR code.');">
+                        <button class="btn btn-secondary" type="submit" style="width: 100%;">Generate New Secret</button>
+                    </form>
+                </div>
+            </div>
+        {% endif %}
+    </div>
+
+    <div class="card" style="margin-top: 24px; background: #f0f9ff; border: 1px solid #bae6fd;">
+        <h3 style="margin: 0 0 12px 0; font-size: 16px;">📱 Supported Authenticator Apps</h3>
+        <ul style="margin: 0; padding-left: 20px; color: var(--muted);">
+            <li>Google Authenticator</li>
+            <li>Microsoft Authenticator</li>
+            <li>Authy</li>
+            <li>1Password</li>
+            <li>LastPass Authenticator</li>
+            <li>Any TOTP-compatible app</li>
+        </ul>
+    </div>
+</div>
+
+<script>
+// Auto-format the token input
+document.getElementById('token')?.addEventListener('input', function(e) {
+    this.value = this.value.replace(/[^0-9]/g, '');
+});
+</script>
+{% endblock %}
+

@@ -2,9 +2,11 @@ from flask import Flask, render_template, request, redirect, url_for, flash, sen
 import traceback
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import text as db_text, or_
+from sqlalchemy.exc import OperationalError
 from flask_login import LoginManager, login_user, login_required, logout_user, current_user
 from functools import wraps
-import pyotp, os, json, datetime, subprocess, threading, time
+import pyotp, os, json, datetime, subprocess, threading, time, shutil, io, base64
+import qrcode
 from werkzeug.security import generate_password_hash, check_password_hash
 
 # Update these lines (around line 10-15):
@@ -106,6 +108,25 @@ def admin_required(f):
 @login.user_loader
 def load_user(uid):
     return User.query.get(int(uid))
+
+def check_disk_space(path):
+    """Check available disk space for a given path"""
+    try:
+        stat = shutil.disk_usage(path)
+        total_gb = stat.total / (1024**3)
+        free_gb = stat.free / (1024**3)
+        used_gb = stat.used / (1024**3)
+        free_percent = (stat.free / stat.total) * 100
+        return {
+            'total_gb': round(total_gb, 2),
+            'free_gb': round(free_gb, 2),
+            'used_gb': round(used_gb, 2),
+            'free_percent': round(free_percent, 2),
+            'is_low': free_percent < 5.0
+        }
+    except Exception as e:
+        app.logger.error(f"Error checking disk space: {e}")
+        return None
 
 # Initialize database and create admin user (Flask 2.3+ compatible)
 # @app.before_first_request is deprecated in Flask 2.2+, removed in Flask 2.3+
@@ -484,14 +505,38 @@ def create_user():
             flash('Username already exists', 'error')
             return render_template('users/create.html')
         
-        user = User(username=username, role=role, mfa_enabled=mfa_enabled, is_active=True)
-        user.set_password(password)
-        if mfa_enabled:
-            user.mfa_secret = pyotp.random_base32()
-        db.session.add(user)
-        db.session.commit()
-        flash('User created successfully', 'success')
-        return redirect(url_for('users'))
+        try:
+            user = User(username=username, role=role, mfa_enabled=mfa_enabled, is_active=True)
+            user.set_password(password)
+            if mfa_enabled:
+                user.mfa_secret = pyotp.random_base32()
+            db.session.add(user)
+            db.session.commit()
+            flash('User created successfully', 'success')
+            return redirect(url_for('users'))
+        except OperationalError as e:
+            db.session.rollback()
+            error_msg = str(e)
+            app.logger.error(f"Database error creating user: {error_msg}")
+            
+            # Check disk space
+            disk_info = check_disk_space(DATA_DIR)
+            if disk_info:
+                if disk_info['is_low']:
+                    flash(f"Database error: Disk space is critically low ({disk_info['free_percent']}% free, {disk_info['free_gb']} GB available). Please free up space and try again.", 'error')
+                else:
+                    flash(f"Database error: {error_msg}. Disk space: {disk_info['free_gb']} GB free ({disk_info['free_percent']}%).", 'error')
+            else:
+                if 'full' in error_msg.lower() or 'disk' in error_msg.lower():
+                    flash(f"Database error: Disk or database is full. Please check available disk space and database file size.", 'error')
+                else:
+                    flash(f"Database error: {error_msg}. Please check logs for details.", 'error')
+            return render_template('users/create.html')
+        except Exception as e:
+            db.session.rollback()
+            app.logger.error(f"Unexpected error creating user: {traceback.format_exc()}")
+            flash(f"Error creating user: {str(e)}", 'error')
+            return render_template('users/create.html')
     
     return render_template('users/create.html')
 
@@ -507,6 +552,107 @@ def delete_user(user_id):
     db.session.commit()
     flash('User deleted successfully', 'success')
     return redirect(url_for('users'))
+
+# MFA Management Routes
+@app.route('/users/<int:user_id>/mfa/setup')
+@login_required
+def mfa_setup(user_id):
+    """Display MFA QR code for setup"""
+    user = User.query.get_or_404(user_id)
+    
+    # Users can only view their own MFA, admins can view any user's
+    if not current_user.is_admin() and user.id != current_user.id:
+        flash('Access denied', 'error')
+        return redirect(url_for('index'))
+    
+    # Generate secret if not exists
+    if not user.mfa_secret:
+        user.mfa_secret = pyotp.random_base32()
+        db.session.commit()
+    
+    # Generate QR code
+    totp_uri = pyotp.totp.TOTP(user.mfa_secret).provisioning_uri(
+        name=user.username,
+        issuer_name='Security Audit Portal'
+    )
+    
+    qr = qrcode.QRCode(version=1, box_size=10, border=5)
+    qr.add_data(totp_uri)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="black", back_color="white")
+    
+    # Convert to base64 for display
+    img_buffer = io.BytesIO()
+    img.save(img_buffer, format='PNG')
+    img_buffer.seek(0)
+    img_data = base64.b64encode(img_buffer.read()).decode()
+    
+    return render_template('users/mfa_setup.html', 
+                         user=user, 
+                         qr_code=img_data,
+                         secret=user.mfa_secret,
+                         totp_uri=totp_uri)
+
+@app.route('/users/<int:user_id>/mfa/regenerate', methods=['POST'])
+@login_required
+def mfa_regenerate(user_id):
+    """Regenerate MFA secret"""
+    user = User.query.get_or_404(user_id)
+    
+    # Users can only regenerate their own MFA, admins can regenerate any user's
+    if not current_user.is_admin() and user.id != current_user.id:
+        flash('Access denied', 'error')
+        return redirect(url_for('index'))
+    
+    # Generate new secret
+    user.mfa_secret = pyotp.random_base32()
+    # Disable MFA until user sets it up again
+    user.mfa_enabled = False
+    db.session.commit()
+    
+    flash('MFA secret regenerated. Please set up MFA again with the new QR code.', 'success')
+    return redirect(url_for('mfa_setup', user_id=user.id))
+
+@app.route('/users/<int:user_id>/mfa/verify', methods=['POST'])
+@login_required
+def mfa_verify(user_id):
+    """Verify MFA token and enable MFA"""
+    user = User.query.get_or_404(user_id)
+    
+    # Users can only verify their own MFA, admins can verify any user's
+    if not current_user.is_admin() and user.id != current_user.id:
+        flash('Access denied', 'error')
+        return redirect(url_for('index'))
+    
+    token = request.form.get('token', '').strip()
+    
+    if not token:
+        flash('Please enter the verification code from your authenticator app', 'error')
+        return redirect(url_for('mfa_setup', user_id=user.id))
+    
+    if not user.mfa_secret:
+        flash('MFA secret not found. Please regenerate.', 'error')
+        return redirect(url_for('mfa_setup', user_id=user.id))
+    
+    # Verify token
+    totp = pyotp.TOTP(user.mfa_secret)
+    if totp.verify(token, valid_window=1):
+        user.mfa_enabled = True
+        db.session.commit()
+        flash('MFA verified and enabled successfully!', 'success')
+        if current_user.is_admin():
+            return redirect(url_for('users'))
+        else:
+            return redirect(url_for('index'))
+    else:
+        flash('Invalid verification code. Please try again.', 'error')
+        return redirect(url_for('mfa_setup', user_id=user.id))
+
+@app.route('/profile/mfa')
+@login_required
+def profile_mfa():
+    """User's own MFA management page"""
+    return redirect(url_for('mfa_setup', user_id=current_user.id))
 
 # Host Management Routes
 @app.route('/hosts')
@@ -654,6 +800,72 @@ def download(scan, fn):
     p = os.path.join(base, scan, 'final_report', fn)
     if os.path.exists(p): return send_file(p)
     return "Not found", 404
+
+@app.route('/health')
+def health():
+    """Health check endpoint for Docker"""
+    try:
+        # Quick database check
+        db.session.execute(db_text("SELECT 1"))
+        db_status = "ok"
+    except Exception as e:
+        db_status = f"error: {str(e)}"
+    
+    disk_info = check_disk_space(DATA_DIR)
+    health_data = {
+        'status': 'healthy' if db_status == 'ok' else 'unhealthy',
+        'database': db_status,
+        'disk': disk_info
+    }
+    
+    status_code = 200 if db_status == 'ok' else 503
+    return jsonify(health_data), status_code
+
+@app.route('/admin/diagnostics')
+@admin_required
+def diagnostics():
+    """Database and system diagnostics for admins"""
+    diagnostics_data = {
+        'database': {},
+        'disk': {},
+        'database_file': {}
+    }
+    
+    # Database file info
+    db_file = os.path.join(DATA_DIR, 'webapp.db')
+    if os.path.exists(db_file):
+        try:
+            db_size = os.path.getsize(db_file)
+            db_size_mb = db_size / (1024 * 1024)
+            diagnostics_data['database_file'] = {
+                'path': db_file,
+                'size_mb': round(db_size_mb, 2),
+                'exists': True
+            }
+        except Exception as e:
+            diagnostics_data['database_file'] = {'error': str(e)}
+    else:
+        diagnostics_data['database_file'] = {'exists': False, 'path': db_file}
+    
+    # Database connection test
+    try:
+        result = db.session.execute(db_text("SELECT COUNT(*) FROM user"))
+        user_count = result.scalar()
+        diagnostics_data['database'] = {
+            'status': 'connected',
+            'user_count': user_count,
+            'test_query': 'success'
+        }
+    except Exception as e:
+        diagnostics_data['database'] = {
+            'status': 'error',
+            'error': str(e)
+        }
+    
+    # Disk space
+    diagnostics_data['disk'] = check_disk_space(DATA_DIR)
+    
+    return jsonify(diagnostics_data)
 
 @app.errorhandler(500)
 def internal_error(error):

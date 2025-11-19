@@ -28,12 +28,19 @@
                             <td>{{ user.id }}</td>
                             <td>{{ user.username }}</td>
                             <td>{{ user.role|capitalize }}</td>
-                            <td>{{ 'Enabled' if user.mfa_enabled else 'Disabled' }}</td>
+                            <td>
+                                {% if user.mfa_enabled %}
+                                    <span style="color: green;">✓ Enabled</span>
+                                {% else %}
+                                    <span style="color: orange;">⚠ Disabled</span>
+                                {% endif %}
+                                <a href="{{ url_for('mfa_setup', user_id=user.id) }}" style="margin-left: 8px; font-size: 0.9em;">Setup</a>
+                            </td>
                             <td>{{ user.created_at.strftime('%Y-%m-%d') if user.created_at else '—' }}</td>
                             <td>{{ 'Active' if user.is_active else 'Inactive' }}</td>
                             <td>
                                 {% if user.id != current_user.id %}
-                                    <form action="{{ url_for('delete_user', user_id=user.id) }}" method="post" onsubmit="return confirm('Delete user {{ user.username }}?');">
+                                    <form action="{{ url_for('delete_user', user_id=user.id) }}" method="post" onsubmit="return confirm('Delete user {{ user.username }}?');" style="display: inline;">
                                         <button class="btn btn-secondary" type="submit">Delete</button>
                                     </form>
                                 {% else %}

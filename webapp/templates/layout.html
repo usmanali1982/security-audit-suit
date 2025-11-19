@@ -219,6 +219,7 @@
         <div class="user-meta">
             <span>{{ current_user.username }}</span>
             <span class="user-role">{{ 'Admin' if current_user.is_admin() else 'User' }}</span>
+            <a class="logout-btn" href="{{ url_for('mfa_setup', user_id=current_user.id) }}" style="background: rgba(255, 255, 255, 0.1);">🔐 MFA</a>
             <a class="logout-btn" href="{{ url_for('logout') }}">Logout</a>
         </div>
     </header>
