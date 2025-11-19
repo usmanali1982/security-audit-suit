@@ -1,34 +1,84 @@
 {% extends "layout.html" %}
 {% block title %}Hosts · Security Audit Suite{% endblock %}
 
+{% block head %}
+<style>
+    .badge { display: inline-block; padding: .35em .65em; font-size: .75em; font-weight: 700; line-height: 1; color: #fff; text-align: center; white-space: nowrap; vertical-align: baseline; border-radius: .25rem; }
+    .badge-success { background-color: #28a745; }
+    .badge-danger { background-color: #dc3545; }
+    .badge-secondary { background-color: #6c757d; }
+    .badge-warning { background-color: #ffc107; color: #212529; }
+    .action-bar { margin-bottom: 1rem; display: flex; gap: 0.5rem; }
+    .modal { display: none; position: fixed; z-index: 1050; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.5); }
+    .modal-dialog { position: relative; margin: 5% auto; }
+    .modal-content { position: relative; display: flex; flex-direction: column; width: 100%; pointer-events: auto; background-color: #fff; background-clip: padding-box; border: 1px solid rgba(0,0,0,.2); border-radius: .3rem; outline: 0; max-width: 600px; }
+    .modal-header { display: flex; align-items: flex-start; justify-content: space-between; padding: 1rem; border-bottom: 1px solid #dee2e6; }
+    .modal-title { margin-bottom: 0; line-height: 1.5; }
+    .modal-body { position: relative; flex: 1 1 auto; padding: 1rem; }
+    .modal-footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; padding: .75rem; border-top: 1px solid #dee2e6; gap: 0.5rem; }
+    .close { float: right; font-size: 1.5rem; font-weight: 700; line-height: 1; color: #000; text-shadow: 0 1px 0 #fff; opacity: .5; background: transparent; border: 0; cursor: pointer; }
+    .script-list { max-height: 300px; overflow-y: auto; border: 1px solid #ccc; padding: 10px; border-radius: 4px; }
+    .script-list label { display: block; }
+    .nav-tabs { display: flex; border-bottom: 1px solid #dee2e6; }
+    .nav-link { display: block; padding: .5rem 1rem; border: 1px solid transparent; border-top-left-radius: .25rem; border-top-right-radius: .25rem; cursor: pointer; }
+    .nav-link.active { color: #495057; background-color: #fff; border-color: #dee2e6 #dee2e6 #fff; }
+    .tab-content .tab-pane { display: none; }
+    .tab-content .tab-pane.active { display: block; }
+</style>
+{% endblock %}
+
 {% block content %}
 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px;">
     <h1 style="margin: 0;">Hosts</h1>
     <a class="btn btn-primary" href="{{ url_for('create_host') }}">➕ Add Host</a>
 </div>
 
+<div class="action-bar">
+    <button id="check-connectivity-btn" class="btn btn-secondary" disabled>Check Connectivity</button>
+    <button id="run-setup-btn" class="btn btn-secondary" disabled>Run Setup Scripts</button>
+    <button id="run-audit-btn" class="btn btn-secondary" disabled>Run Audit Scan</button>
+</div>
+
 <div class="card">
     {% if hosts %}
         <div style="overflow-x: auto;">
-            <table>
+            <table id="hosts-table">
                 <thead>
                     <tr>
+                        <th style="width: 20px;"><input type="checkbox" id="select-all-hosts"></th>
                         <th>Hostname</th>
                         <th>IP Address</th>
                         <th>SSH User</th>
                         <th>SSH Port</th>
-                        <th>Status</th>
+                        <th>Connectivity</th>
+                        <th>Last Checked</th>
+                        <th>Latency</th>
                         <th></th>
                     </tr>
                 </thead>
                 <tbody>
                     {% for host in hosts %}
-                        <tr>
+                        <tr data-host-id="{{ host.id }}">
+                            <td><input type="checkbox" class="host-checkbox"></td>
                             <td>{{ host.hostname }}</td>
                             <td>{{ host.ip_address }}</td>
                             <td>{{ host.ssh_user }}</td>
                             <td>{{ host.ssh_port }}</td>
-                            <td>{{ 'Active' if host.is_active else 'Disabled' }}</td>
+                            <td class="connectivity-status">
+                                {% if host.last_check_status == 'online' %}
+                                    <span class="badge badge-success">Online</span>
+                                {% elif host.last_check_status == 'offline' %}
+                                    <span class="badge badge-danger">Offline</span>
+                                {% else %}
+                                    <span class="badge badge-secondary">Unknown</span>
+                                {% endif %}
+                            </td>
+                            <td class="last-checked-at">
+                                {{ host.last_check_at.strftime('%Y-%m-%d %H:%M:%S') if host.last_check_at else 'N/A' }}
+                            </td>
+                            <td class="latency">
+                                {{ '%.2f ms'|format(host.last_latency_ms) if host.last_latency_ms is not none else 'N/A' }}
+                            </td>
                             <td style="display: flex; gap: 8px;">
                                 <a class="btn btn-secondary" href="{{ url_for('edit_host', host_id=host.id) }}">Edit</a>
                                 <form action="{{ url_for('delete_host', host_id=host.id) }}" method="post" onsubmit="return confirm('Delete host {{ host.hostname }}?');">
@@ -44,5 +94,260 @@
         <div class="empty-state">No hosts have been added yet.</div>
     {% endif %}
 </div>
-{% endblock %}
 
+<!-- Setup Modal -->
+<div id="setup-modal" class="modal">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Run Setup Scripts</h5>
+                <button type="button" class="close" data-dismiss="modal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p>Select setup scripts to run on <strong id="setup-host-count"></strong> host(s).</p>
+                <div id="setup-script-list" class="script-list">
+                    <!-- Scripts will be loaded here by JS -->
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-dismiss="modal">Cancel</button>
+                <button type="button" id="confirm-run-setup" class="btn btn-primary">Run</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Audit Modal -->
+<div id="audit-modal" class="modal">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Run Audit Scan</h5>
+                <button type="button" class="close" data-dismiss="modal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p>Select audit scripts to run on <strong id="audit-host-count"></strong> host(s).</p>
+                <ul class="nav nav-tabs">
+                    <li class="nav-item"><a class="nav-link active" data-toggle="tab" href="#baseline-scripts">Baseline</a></li>
+                    <li class="nav-item"><a class="nav-link" data-toggle="tab" href="#pentest-scripts">Pentest</a></li>
+                </ul>
+                <div class="tab-content">
+                    <div id="baseline-scripts" class="tab-pane active">
+                        <div id="audit-script-list-baseline" class="script-list" style="margin-top: 1rem;"></div>
+                    </div>
+                    <div id="pentest-scripts" class="tab-pane">
+                        <div id="audit-script-list-pentest" class="script-list" style="margin-top: 1rem;"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-dismiss="modal">Cancel</button>
+                <button type="button" id="confirm-run-audit" class="btn btn-primary">Run</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    const selectAllCheckbox = document.getElementById('select-all-hosts');
+    const hostCheckboxes = document.querySelectorAll('.host-checkbox');
+    const actionButtons = [
+        document.getElementById('check-connectivity-btn'),
+        document.getElementById('run-setup-btn'),
+        document.getElementById('run-audit-btn')
+    ];
+
+    function getSelectedHostIds() {
+        const selected = [];
+        hostCheckboxes.forEach(cb => {
+            if (cb.checked) {
+                selected.push(cb.closest('tr').dataset.hostId);
+            }
+        });
+        return selected;
+    }
+
+    function updateActionButtons() {
+        const selectedCount = getSelectedHostIds().length;
+        actionButtons.forEach(btn => {
+            btn.disabled = selectedCount === 0;
+        });
+    }
+
+    selectAllCheckbox?.addEventListener('change', (e) => {
+        hostCheckboxes.forEach(cb => cb.checked = e.target.checked);
+        updateActionButtons();
+    });
+
+    hostCheckboxes.forEach(cb => {
+        cb.addEventListener('change', () => {
+            if (!cb.checked) {
+                selectAllCheckbox.checked = false;
+            } else if (Array.from(hostCheckboxes).every(c => c.checked)) {
+                selectAllCheckbox.checked = true;
+            }
+            updateActionButtons();
+        });
+    });
+
+    // --- Connectivity Check ---
+    document.getElementById('check-connectivity-btn')?.addEventListener('click', async () => {
+        const hostIds = getSelectedHostIds();
+        if (hostIds.length === 0) return;
+
+        hostIds.forEach(id => {
+            const statusCell = document.querySelector(`tr[data-host-id="${id}"] .connectivity-status`);
+            if (statusCell) statusCell.innerHTML = `<span class="badge badge-warning">Checking...</span>`;
+        });
+
+        try {
+            const response = await fetch('/api/hosts/status', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ host_ids: hostIds })
+            });
+            const data = await response.json();
+
+            data.results.forEach(result => {
+                const row = document.querySelector(`tr[data-host-id="${result.host_id}"]`);
+                if (!row) return;
+
+                const statusCell = row.querySelector('.connectivity-status');
+                const lastCheckedCell = row.querySelector('.last-checked-at');
+                const latencyCell = row.querySelector('.latency');
+
+                if (result.ok) {
+                    statusCell.innerHTML = `<span class="badge badge-success">Online</span>`;
+                    latencyCell.textContent = `${result.latency_ms.toFixed(2)} ms`;
+                } else {
+                    statusCell.innerHTML = `<span class="badge badge-danger" title="${result.message}">Offline</span>`;
+                    latencyCell.textContent = 'N/A';
+                }
+                lastCheckedCell.textContent = new Date().toISOString().slice(0, 19).replace('T', ' ');
+            });
+        } catch (error) {
+            console.error('Connectivity check failed:', error);
+            alert('An error occurred while checking host connectivity.');
+            // Revert status
+            hostIds.forEach(id => {
+                const statusCell = document.querySelector(`tr[data-host-id="${id}"] .connectivity-status`);
+                if (statusCell) statusCell.innerHTML = `<span class="badge badge-secondary">Unknown</span>`;
+            });
+        }
+    });
+
+    // --- Modal Handling ---
+    const setupModal = document.getElementById('setup-modal');
+    const auditModal = document.getElementById('audit-modal');
+
+    document.querySelectorAll('[data-dismiss="modal"]').forEach(el => {
+        el.addEventListener('click', () => {
+            el.closest('.modal').style.display = 'none';
+        });
+    });
+
+    async function fetchAndPopulateScripts(category, listElementId) {
+        const listElement = document.getElementById(listElementId);
+        listElement.innerHTML = 'Loading scripts...';
+        try {
+            const response = await fetch(`/api/scripts?category=${category}`);
+            const data = await response.json();
+            listElement.innerHTML = '';
+            if (data.scripts && data.scripts.length > 0) {
+                data.scripts.forEach(script => {
+                    listElement.innerHTML += `
+                        <label>
+                            <input type="checkbox" name="script" value="${script.id}">
+                            ${script.name}
+                        </label>
+                    `;
+                });
+            } else {
+                listElement.innerHTML = 'No scripts found in this category.';
+            }
+        } catch (error) {
+            console.error(`Failed to load ${category} scripts:`, error);
+            listElement.innerHTML = 'Error loading scripts.';
+        }
+    }
+
+    document.getElementById('run-setup-btn')?.addEventListener('click', () => {
+        const hostIds = getSelectedHostIds();
+        document.getElementById('setup-host-count').textContent = hostIds.length;
+        fetchAndPopulateScripts('setup', 'setup-script-list');
+        setupModal.style.display = 'block';
+    });
+
+    document.getElementById('run-audit-btn')?.addEventListener('click', () => {
+        const hostIds = getSelectedHostIds();
+        document.getElementById('audit-host-count').textContent = hostIds.length;
+        fetchAndPopulateScripts('scan/baseline', 'audit-script-list-baseline');
+        fetchAndPopulateScripts('scan/pentest', 'audit-script-list-pentest');
+        auditModal.style.display = 'block';
+    });
+
+    // --- Tab switching in audit modal ---
+    document.querySelectorAll('.nav-tabs .nav-link').forEach(tab => {
+        tab.addEventListener('click', (e) => {
+            e.preventDefault();
+            const parent = e.target.closest('.nav-tabs');
+            parent.querySelector('.active').classList.remove('active');
+            e.target.classList.add('active');
+
+            const content = parent.nextElementSibling;
+            content.querySelector('.active').classList.remove('active');
+            content.querySelector(e.target.getAttribute('href')).classList.add('active');
+        });
+    });
+
+    // --- Run Execution ---
+    async function startRun(runType, modalElement) {
+        const hostIds = getSelectedHostIds();
+        const scriptCheckboxes = modalElement.querySelectorAll('input[name="script"]:checked');
+        const scriptIds = Array.from(scriptCheckboxes).map(cb => cb.value);
+
+        if (hostIds.length === 0 || scriptIds.length === 0) {
+            alert('Please select at least one host and one script.');
+            return;
+        }
+
+        try {
+            const response = await fetch('/api/runs', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    run_type: runType,
+                    host_ids: hostIds,
+                    script_ids: scriptIds,
+                    metadata: {}
+                })
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error || 'Failed to start run.');
+            }
+
+            const data = await response.json();
+            modalElement.style.display = 'none';
+            // Redirect to the run details page
+            window.location.href = `/runs/${data.run_id}`;
+
+        } catch (error) {
+            console.error(`Failed to start ${runType} run:`, error);
+            alert(`Error: ${error.message}`);
+        }
+    }
+
+    document.getElementById('confirm-run-setup')?.addEventListener('click', () => {
+        startRun('setup', setupModal);
+    });
+
+    document.getElementById('confirm-run-audit')?.addEventListener('click', () => {
+        startRun('audit', auditModal);
+    });
+
+});
+</script>
+{% endblock %}

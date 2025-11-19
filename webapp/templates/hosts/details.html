@@ -1,0 +1,153 @@
+{% extends "layout.html" %}
+{% block title %}Run {{ run.run_id[:12] }} · Security Audit Suite{% endblock %}
+
+{% block head %}
+<style>
+    .run-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }
+    .summary-item { background: #f9f9f9; padding: 1rem; border-radius: 4px; border: 1px solid #eee; }
+    .summary-item h3 { margin: 0 0 0.5rem; font-size: 0.9rem; color: #555; text-transform: uppercase; }
+    .summary-item p { margin: 0; font-size: 1.1rem; font-weight: 500; }
+    #log-container { background-color: #1e1e1e; color: #d4d4d4; font-family: monospace; padding: 1rem; height: 600px; overflow-y: auto; border-radius: 4px; white-space: pre-wrap; word-wrap: break-word; }
+    .log-line { display: flex; }
+    .log-line .timestamp { color: #888; min-width: 200px; }
+    .log-line .level-info { color: #569cd6; }
+    .log-line .level-error { color: #f44747; font-weight: bold; }
+    .log-line .level-warn { color: #ce9178; }
+    .log-line .message { flex-grow: 1; }
+    .badge { display: inline-block; padding: .35em .65em; font-size: .75em; font-weight: 700; line-height: 1; color: #fff; text-align: center; white-space: nowrap; vertical-align: baseline; border-radius: .25rem; }
+    .status-running { background-color: #007bff; }
+    .status-completed { background-color: #28a745; }
+    .status-failed { background-color: #dc3545; }
+    .status-queued, .status-pending { background-color: #6c757d; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px;">
+    <h1 style="margin: 0;">Run Details</h1>
+    <a href="{{ url_for('list_runs_page') }}" class="btn btn-secondary">Back to Runs</a>
+</div>
+
+<div class="run-summary">
+    <div class="summary-item">
+        <h3>Run ID</h3>
+        <p>{{ run.run_id }}</p>
+    </div>
+    <div class="summary-item">
+        <h3>Type</h3>
+        <p>{{ run.run_type | capitalize }}</p>
+    </div>
+    <div class="summary-item">
+        <h3>Status</h3>
+        <p><span id="run-status" class="badge status-{{ run.status }}">{{ run.status | capitalize }}</span></p>
+    </div>
+    <div class="summary-item">
+        <h3>Started At</h3>
+        <p id="run-started-at">{{ run.started_at.strftime('%Y-%m-%d %H:%M:%S') if run.started_at else 'N/A' }}</p>
+    </div>
+</div>
+
+<div class="card">
+    <h2>Live Logs</h2>
+    <div id="log-container">
+        <div class="log-line">
+            <span class="timestamp"></span>
+            <span class="message">Connecting to log stream...</span>
+        </div>
+    </div>
+</div>
+
+<div class="card" style="margin-top: 1.5rem;">
+    <h2>Targeted Hosts</h2>
+    <div style="overflow-x: auto;">
+        <table>
+            <thead>
+                <tr>
+                    <th>Hostname</th>
+                    <th>IP Address</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for host in run.hosts %}
+                    <tr>
+                        <td>{{ host.hostname }}</td>
+                        <td>{{ host.ip_address }}</td>
+                        <td><span class="badge status-{{ host.status }}">{{ host.status | capitalize }}</span></td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    const logContainer = document.getElementById('log-container');
+    const runStatusBadge = document.getElementById('run-status');
+    const runId = "{{ run.run_id }}";
+    let initialLogsLoaded = false;
+
+    function addLogLine(log) {
+        const line = document.createElement('div');
+        line.className = 'log-line';
+
+        const timestamp = new Date(log.created_at).toLocaleString();
+        const levelClass = `level-${log.level.toLowerCase()}`;
+
+        line.innerHTML = `
+            <span class="timestamp">${timestamp}</span>
+            <span class="level ${levelClass}">[${log.level.toUpperCase()}]</span>
+            <span class="message">${log.message}</span>
+        `;
+        logContainer.appendChild(line);
+        logContainer.scrollTop = logContainer.scrollHeight;
+    }
+
+    function connectToStream() {
+        const eventSource = new EventSource(`/api/runs/${runId}/logs/stream`);
+
+        eventSource.onopen = () => {
+            if (!initialLogsLoaded) {
+                logContainer.innerHTML = ''; // Clear "Connecting..." message
+                initialLogsLoaded = true;
+            }
+        };
+
+        eventSource.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+
+            if (data.heartbeat) {
+                return; // Ignore heartbeat messages
+            }
+
+            addLogLine(data);
+
+            // Check for status updates within the log stream (optional but useful)
+            if (data.message.toLowerCase().includes('run completed')) {
+                updateRunStatus('completed');
+            } else if (data.level.toLowerCase() === 'error') {
+                 // Don't mark as failed immediately, wait for final status callback
+            }
+        };
+
+        eventSource.onerror = () => {
+            addLogLine({
+                created_at: new Date().toISOString(),
+                level: 'ERROR',
+                message: 'Log stream disconnected. The run may have completed or an error occurred. The page will no longer update.'
+            });
+            eventSource.close();
+        };
+    }
+
+    function updateRunStatus(status) {
+        runStatusBadge.textContent = status.charAt(0).toUpperCase() + status.slice(1);
+        runStatusBadge.className = `badge status-${status}`;
+    }
+
+    // Initial connection
+    connectToStream();
+});
+</script>
+{% endblock %}

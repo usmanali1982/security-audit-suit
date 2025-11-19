@@ -1,22 +1,37 @@
 from flask import Flask, render_template, request, redirect, url_for, flash, send_file, jsonify, Response, stream_with_context
 import traceback
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import text as db_text, or_
+from sqlalchemy import text as db_text
 from sqlalchemy.exc import OperationalError
 from flask_login import LoginManager, login_user, login_required, logout_user, current_user
 from functools import wraps
+from collections import defaultdict
+from queue import Queue, Empty
+import uuid, sys
 import pyotp, os, json, datetime, subprocess, threading, time, shutil, io, base64
 import qrcode
 from werkzeug.security import generate_password_hash, check_password_hash
+from webapp.services import (
+    ScriptRegistry,
+    SSHConnectivityService,
+    OrchestratorService,
+    RunRequest,
+)
 
-# Update these lines (around line 10-15):
+# --- App Initialization ---
 BASE = os.environ.get('BASE_PATH', '/opt/security-audit')
+PROJECT_ROOT = os.environ.get('PROJECT_ROOT', os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+SCRIPTS_BASE = os.environ.get('SCRIPTS_BASE', PROJECT_ROOT)
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'change-me')
 
 # Ensure data directory exists
 DATA_DIR = os.environ.get('DATA_DIR', os.path.join(BASE, 'data'))
 os.makedirs(DATA_DIR, exist_ok=True)
+REPORTS_DIR = os.path.join(DATA_DIR, 'reports')
+LOGS_DIR = os.path.join(DATA_DIR, 'logs')
+os.makedirs(REPORTS_DIR, exist_ok=True)
+os.makedirs(LOGS_DIR, exist_ok=True)
 
 # Set database path
 database_path = os.path.join(DATA_DIR, 'webapp.db')
@@ -28,6 +43,11 @@ login = LoginManager(app)
 login.login_view = 'login'
 login.login_message = 'Please log in to access this page.'
 
+script_registry = ScriptRegistry(SCRIPTS_BASE)
+connectivity_service = SSHConnectivityService()
+RUN_LOG_STREAMS = defaultdict(list)
+orchestrator = None
+# --- End App Initialization ---
 # Models
 class User(db.Model):
     id=db.Column(db.Integer, primary_key=True)
@@ -60,13 +80,29 @@ class Host(db.Model):
     is_active=db.Column(db.Boolean, default=True)
     created_at=db.Column(db.DateTime, default=db.func.current_timestamp())
     updated_at=db.Column(db.DateTime, default=db.func.current_timestamp(), onupdate=db.func.current_timestamp())
+    bastion_host=db.Column(db.String(255), nullable=True)
+    bastion_user=db.Column(db.String(100), nullable=True)
+    bastion_port=db.Column(db.Integer, nullable=True)
+    bastion_key_path=db.Column(db.String(500), nullable=True)
+    last_check_status=db.Column(db.String(20), nullable=True)
+    last_check_message=db.Column(db.String(255), nullable=True)
+    last_check_at=db.Column(db.DateTime, nullable=True)
+    last_latency_ms=db.Column(db.Float, nullable=True)
     
     def to_dict(self):
         return {
             'id': self.id, 'hostname': self.hostname, 'ip_address': self.ip_address,
             'ssh_user': self.ssh_user, 'ssh_port': self.ssh_port,
             'ssh_key_path': self.ssh_key_path, 'description': self.description,
-            'is_active': self.is_active
+            'is_active': self.is_active,
+            'bastion_host': self.bastion_host,
+            'bastion_user': self.bastion_user,
+            'bastion_port': self.bastion_port,
+            'bastion_key_path': self.bastion_key_path,
+            'last_check_status': self.last_check_status,
+            'last_check_message': self.last_check_message,
+            'last_check_at': self.last_check_at.isoformat() if self.last_check_at else None,
+            'last_latency_ms': self.last_latency_ms,
         }
 
 class Scan(db.Model):
@@ -94,6 +130,195 @@ class ScanLog(db.Model):
     timestamp=db.Column(db.DateTime, default=db.func.current_timestamp())
     
     scan = db.relationship('Scan', backref='scan_logs')
+
+class Run(db.Model):
+    run_id=db.Column(db.String(64), primary_key=True)
+    run_type=db.Column(db.String(50), nullable=False)
+    status=db.Column(db.String(20), default='pending')
+    scripts=db.Column(db.Text, nullable=False)
+    tools=db.Column(db.Text, nullable=True)
+    metadata=db.Column(db.Text, nullable=True)
+    created_by=db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    created_at=db.Column(db.DateTime, default=db.func.current_timestamp())
+    started_at=db.Column(db.DateTime, nullable=True)
+    completed_at=db.Column(db.DateTime, nullable=True)
+    progress=db.Column(db.Integer, default=0)
+    error_message=db.Column(db.Text, nullable=True)
+    report_path=db.Column(db.String(500), nullable=True)
+    
+    creator = db.relationship('User', backref='runs')
+
+    def to_dict(self):
+        return {
+            'run_id': self.run_id,
+            'run_type': self.run_type,
+            'status': self.status,
+            'scripts': json.loads(self.scripts or '[]'),
+            'metadata': json.loads(self.metadata or '{}'),
+            'created_by': self.created_by,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'started_at': self.started_at.isoformat() if self.started_at else None,
+            'completed_at': self.completed_at.isoformat() if self.completed_at else None,
+            'progress': self.progress,
+            'error_message': self.error_message,
+            'report_path': self.report_path,
+        }
+
+class RunHost(db.Model):
+    id=db.Column(db.Integer, primary_key=True)
+    run_id=db.Column(db.String(64), db.ForeignKey('run.run_id'), nullable=False)
+    host_id=db.Column(db.Integer, db.ForeignKey('host.id'), nullable=True)
+    hostname=db.Column(db.String(255), nullable=False)
+    ip_address=db.Column(db.String(45), nullable=False)
+    status=db.Column(db.String(20), default='pending')
+    last_message=db.Column(db.Text, nullable=True)
+    latency_ms=db.Column(db.Float, nullable=True)
+
+    run = db.relationship('Run', backref='hosts')
+
+    def to_dict(self):
+        return {
+            'run_id': self.run_id,
+            'host_id': self.host_id,
+            'hostname': self.hostname,
+            'ip_address': self.ip_address,
+            'status': self.status,
+            'last_message': self.last_message,
+            'latency_ms': self.latency_ms,
+        }
+
+class RunLog(db.Model):
+    id=db.Column(db.Integer, primary_key=True)
+    run_id=db.Column(db.String(64), db.ForeignKey('run.run_id'), nullable=False)
+    level=db.Column(db.String(20), default='info')
+    message=db.Column(db.Text, nullable=False)
+    created_at=db.Column(db.DateTime, default=db.func.current_timestamp())
+
+    run = db.relationship('Run', backref='logs')
+
+    def to_dict(self):
+        return {
+            'run_id': self.run_id,
+            'level': self.level,
+            'message': self.message,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+        }
+
+# --- Real-time Logging & Status Updates ---
+def broadcast_run_log(run_id: str, level: str, message: str):
+    with app.app_context():
+        log = RunLog(run_id=run_id, level=level, message=message)
+        db.session.add(log)
+        db.session.commit()
+        payload = {'run_id': run_id, 'level': level, 'message': message, 'created_at': log.created_at.isoformat() if log.created_at else None}
+    for queue in RUN_LOG_STREAMS.get(run_id, []):
+        try:
+            queue.put(payload)
+        except Exception:
+            continue
+
+
+def update_run_status(run_id: str, status: str, message: str = "", success: bool = True):
+    with app.app_context():
+        run = Run.query.get(run_id)
+        if not run:
+            return
+        run.status = status
+        run.completed_at = datetime.datetime.utcnow() if status in ('completed', 'failed') else run.completed_at
+        run.progress = 100 if status == 'completed' else run.progress
+        run.error_message = None if success else message
+        db.session.commit()
+
+
+def orchestrator_log_callback(run_id: str, line: str):
+    broadcast_run_log(run_id, 'info', line)
+
+
+def orchestrator_status_callback(run_id: str, success: bool, message: str):
+    status = 'completed' if success else 'failed'
+    if not success:
+        broadcast_run_log(run_id, 'error', message)
+    update_run_status(run_id, status, message=message, success=success)
+
+
+def initialize_orchestrator():
+    global orchestrator
+    orchestrator = OrchestratorService(
+        base_path=PROJECT_ROOT,
+        scripts_root=SCRIPTS_BASE,
+        log_callback=orchestrator_log_callback,
+        status_callback=orchestrator_status_callback,
+    )
+
+
+def register_log_stream(run_id: str) -> Queue:
+    q = Queue()
+    RUN_LOG_STREAMS[run_id].append(q)
+    return q
+
+
+def unregister_log_stream(run_id: str, queue: Queue):
+    if run_id in RUN_LOG_STREAMS and queue in RUN_LOG_STREAMS[run_id]:
+        RUN_LOG_STREAMS[run_id].remove(queue)
+    if run_id in RUN_LOG_STREAMS and not RUN_LOG_STREAMS[run_id]:
+        del RUN_LOG_STREAMS[run_id]
+
+# --- Orchestration Logic ---
+def start_security_run(run_type: str, host_ids, script_ids, created_by: int, metadata: dict | None = None):
+    metadata = metadata or {}
+    scripts = []
+    for script_id in script_ids:
+        info = script_registry.get(script_id)
+        if not info:
+            raise ValueError(f"Script {script_id} not found")
+        scripts.append(info)
+    hosts = Host.query.filter(Host.id.in_(host_ids), Host.is_active == True).all()
+    if not hosts:
+        raise ValueError("No valid hosts selected")
+    run_id = uuid.uuid4().hex
+    run = Run(
+        run_id=run_id,
+        run_type=run_type,
+        status='queued',
+        scripts=json.dumps([s.to_dict() for s in scripts]),
+        metadata=json.dumps(metadata),
+        created_by=created_by,
+        started_at=datetime.datetime.utcnow(),
+    )
+    db.session.add(run)
+    for host in hosts:
+        snapshot = host.to_dict()
+        db.session.add(RunHost(
+            run_id=run_id,
+            host_id=host.id,
+            hostname=snapshot['hostname'],
+            ip_address=snapshot['ip_address'],
+            status='pending',
+        ))
+    db.session.commit()
+    hosts_payload = []
+    for host in hosts:
+        hosts_payload.append({
+            'hostname': host.hostname,
+            'ip_address': host.ip_address,
+            'ssh_user': host.ssh_user,
+            'ssh_port': host.ssh_port,
+            'ssh_key_path': host.ssh_key_path,
+        })
+    request = RunRequest(
+        run_type=run_type,
+        hosts=hosts_payload,
+        scripts=[s.relative_path for s in scripts],
+        created_by=created_by,
+        extra_vars=metadata.get('extra_vars', {}),
+    )
+    orchestrator.run(request, run_id=run_id)
+    update_run_status(run_id, 'running')
+    broadcast_run_log(run_id, 'info', f"Run {run_id} started for {len(hosts)} host(s)")
+    return run_id
+
+
+# --- End Orchestration Logic ---
 
 def admin_required(f):
     @wraps(f)
@@ -130,6 +355,8 @@ def check_disk_space(path):
 
 # Initialize database and create admin user (Flask 2.3+ compatible)
 # @app.before_first_request is deprecated in Flask 2.2+, removed in Flask 2.3+
+initialize_orchestrator()
+
 with app.app_context():
     db.create_all()
     
@@ -783,15 +1010,121 @@ def log_stream():
     }
     
     def generate():
-        log_file = log_paths.get(log_type, log_paths['nginx'])
-        try:
-            # Placeholder for SSH-based log tailing
-            # In production, use paramiko to SSH and tail logs
-            yield f"data: {json.dumps({'message': 'Log streaming implementation needed', 'type': 'info'})}\n\n"
-        except Exception as e:
-            yield f"data: {json.dumps({'message': str(e), 'type': 'error'})}\n\n"
+        yield f"data: {json.dumps({'message': 'Use /api/runs/<id>/logs/stream for live execution logs', 'type': 'info'})}\n\n"
     
     return Response(stream_with_context(generate()), mimetype='text/event-stream')
+
+# --- API Endpoints for new features ---
+@app.route('/api/scripts', methods=['GET'])
+@login_required
+def list_scripts():
+    category = request.args.get('category') # e.g., 'setup', 'scan/baseline'
+    scripts = [s.to_dict() for s in script_registry.list(category)]
+    return jsonify({'scripts': scripts})
+
+
+@app.route('/api/scripts/refresh', methods=['POST'])
+@admin_required
+def refresh_scripts():
+    script_registry.refresh()
+    return jsonify({'scripts': [s.to_dict() for s in script_registry.list()]})
+
+@app.route('/api/hosts/status', methods=['POST'])
+@login_required
+def host_status():
+    data = request.get_json(force=True)
+    host_ids = data.get('host_ids', [])
+    if not host_ids:
+        return jsonify({'error': 'host_ids required'}), 400
+    hosts = Host.query.filter(Host.id.in_(host_ids)).all()
+    results = []
+    for host in hosts:
+        result = connectivity_service.check_host(host.ssh_user, host.ip_address, host.ssh_port, host.ssh_key_path)
+        result.host_id = host.id
+        result.hostname = host.hostname
+        host.last_check_status = 'online' if result.ok else 'offline'
+        host.last_check_message = result.message
+        host.last_latency_ms = result.latency_ms
+        host.last_check_at = datetime.datetime.utcnow()
+        payload = result.to_dict()
+        results.append(payload)
+    db.session.commit()
+    return jsonify({'results': results})
+
+@app.route('/api/runs', methods=['POST'])
+@login_required
+def create_run_api():
+    data = request.get_json(force=True)
+    run_type = data.get('run_type')
+    host_ids = data.get('host_ids', [])
+    script_ids = data.get('script_ids', [])
+    metadata = data.get('metadata', {})
+    if not run_type or not host_ids or not script_ids:
+        return jsonify({'error': 'run_type, host_ids, script_ids are required'}), 400
+    try:
+        run_id = start_security_run(run_type, host_ids, script_ids, current_user.id, metadata)
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+    return jsonify({'run_id': run_id}), 201
+
+@app.route('/api/runs/<run_id>', methods=['GET'])
+@login_required
+def get_run(run_id):
+    run = Run.query.get_or_404(run_id)
+    hosts = [host.to_dict() for host in run.hosts]
+    return jsonify({'run': run.to_dict(), 'hosts': hosts})
+
+@app.route('/api/runs/<run_id>/logs/stream')
+@login_required
+def stream_run_logs(run_id):
+    run = Run.query.get_or_404(run_id)
+    queue = register_log_stream(run_id)
+
+    def generate_logs():
+        # First, stream existing logs from the database
+        existing = RunLog.query.filter_by(run_id=run_id).order_by(RunLog.created_at.asc()).all()
+        for log in existing:
+            yield f"data: {json.dumps(log.to_dict())}\n\n"
+        # Then, listen for new logs from the queue
+        try:
+            while True:
+                try:
+                    payload = queue.get(timeout=30)
+                    yield f"data: {json.dumps(payload)}\n\n"
+                except Empty:
+                    yield 'data: {"heartbeat": true}\n\n'
+        finally:
+            unregister_log_stream(run_id, queue)
+
+    return Response(stream_with_context(generate_logs()), mimetype='text/event-stream')
+    
+@app.route('/api/security-suite')
+@login_required
+def security_suite_details():
+    details = {
+        'tools': [
+            {
+                'name': 'OWASP ZAP',
+                'description': 'Active and passive web application scanning to detect vulnerabilities based on real server_names discovered on remote hosts.',
+            },
+            {
+                'name': 'Wazuh',
+                'description': 'Host-based intrusion detection and compliance monitoring; collects events from remote hosts via agents or SSH.',
+            },
+            {
+                'name': 'OpenVAS / Greenbone',
+                'description': 'Network vulnerability scanning for servers and services exposed on remote hosts.',
+            },
+            {
+                'name': 'Custom setup scripts',
+                'description': 'Hardening and configuration scripts found under scripts/setup to bootstrap remote servers.',
+            },
+        ],
+        'usage': 'Select hosts, validate connectivity, choose setup/baseline/pentest scripts, then run orchestrations that chain Ansible scripts and security tools. Reports are stored per host/run in data/reports.',
+    }
+    return jsonify(details)
+
+# --- End API Endpoints ---
 
 @app.route('/download/<path:scan>/<fn>')
 @login_required
