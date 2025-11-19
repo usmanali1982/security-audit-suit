@@ -11,6 +11,7 @@ services:
       - "5005:5005"
     volumes:
       - ./webapp:/app/webapp:ro
+      - ./scripts:/app/scripts:ro
       - scan-data:/var/security-scans
       - ./data:/opt/security-audit/data
     environment:
@@ -27,6 +28,8 @@ services:
     restart: unless-stopped
     networks:
       - audit-network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5005/health"]
       interval: 30s

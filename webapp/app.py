@@ -21,7 +21,7 @@ from webapp.services import (
 # --- App Initialization ---
 BASE = os.environ.get('BASE_PATH', '/opt/security-audit')
 PROJECT_ROOT = os.environ.get('PROJECT_ROOT', os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-SCRIPTS_BASE = os.environ.get('SCRIPTS_BASE', PROJECT_ROOT)
+SCRIPTS_BASE = os.environ.get('SCRIPTS_BASE', os.path.join(PROJECT_ROOT, 'scripts'))
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'change-me')
 
