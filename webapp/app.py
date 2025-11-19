@@ -137,7 +137,7 @@ class Run(db.Model):
     status=db.Column(db.String(20), default='pending')
     scripts=db.Column(db.Text, nullable=False)
     tools=db.Column(db.Text, nullable=True)
-    metadata=db.Column(db.Text, nullable=True)
+    run_metadata=db.Column(db.Text, nullable=True)
     created_by=db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
     created_at=db.Column(db.DateTime, default=db.func.current_timestamp())
     started_at=db.Column(db.DateTime, nullable=True)
@@ -154,7 +154,7 @@ class Run(db.Model):
             'run_type': self.run_type,
             'status': self.status,
             'scripts': json.loads(self.scripts or '[]'),
-            'metadata': json.loads(self.metadata or '{}'),
+            'run_metadata': json.loads(self.run_metadata or '{}'),
             'created_by': self.created_by,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'started_at': self.started_at.isoformat() if self.started_at else None,
@@ -281,7 +281,7 @@ def start_security_run(run_type: str, host_ids, script_ids, created_by: int, met
         run_type=run_type,
         status='queued',
         scripts=json.dumps([s.to_dict() for s in scripts]),
-        metadata=json.dumps(metadata),
+        run_metadata=json.dumps(metadata),
         created_by=created_by,
         started_at=datetime.datetime.utcnow(),
     )
