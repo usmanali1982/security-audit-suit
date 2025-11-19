@@ -112,6 +112,7 @@ ufw allow 443/tcp
 ufw allow out on lo
 ufw allow from 39.45.101.112 to any port 9977 proto tcp
 ufw allow from 80.238.236.152 to any port 9977 proto tcp
+ufw allow from 80.238.234.59 to any port 9977 proto tcp
 ufw deny 80/tcp
 
 ufw logging medium
