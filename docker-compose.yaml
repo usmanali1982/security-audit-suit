@@ -1,0 +1,200 @@
+root@soc-server:~/audit-sec/security-audit-suit# docker-compose up -d
+WARN[0000] /root/audit-sec/security-audit-suit/docker-compose.yml: the attribute `version` is obsolete, it will be ignored, please remove it to avoid potential confusion 
+[+] Running 2/2
+ ! wazuh-dashboard  Interrupted                                                                                                                                                                  2.2s 
+ ✘ wazuh Error      pull access denied for wazuh/wazuh, repository does not exist or may require 'docker login': denied: requested access to the resource is denied                              2.2s 
+Error response from daemon: pull access denied for wazuh/wazuh, repository does not exist or may require 'docker login': denied: requested access to the resource is denied
+root@soc-server:~/audit-sec/security-audit-suit# docker images
+REPOSITORY                    TAG       IMAGE ID       CREATED          SIZE
+security-audit-suit-webapp    latest    0c1d870fc6de   51 minutes ago   1.33GB
+security-audit-suit-scanner   latest    1943f2b2591b   7 hours ago      1.77GB
+wazuh/wazuh-dashboard         4.14.1    0b038d2e7e39   6 days ago       1.26GB
+hashicorp/vault               1.18.0    11e1a602df68   13 months ago    466MB
+wazuh/wazuh-manager           4.9.0     8d4a758947bf   14 months ago    1.28GB
+securecompliance/gvm          latest    ed6308f4227f   4 years ago      486MB
+root@soc-server:~/audit-sec/security-audit-suit# cat docker-compose.yml 
+version: '3.8'
+
+services:
+  # Flask Web Application
+  webapp:
+    build:
+      context: .
+      dockerfile: Dockerfile.webapp
+    container_name: security-audit-webapp
+    ports:
+      - "5005:5005"
+    volumes:
+      - ./webapp:/app/webapp:ro
+      - ./scripts:/app/scripts:ro
+      - scan-data:/var/security-scans
+      - ./data:/opt/security-audit/data
+    environment:
+      - FLASK_ENV=production
+      - FLASK_APP=webapp/app.py
+      - SECRET_KEY=${SECRET_KEY:-change-me-in-production}
+      - DATA_DIR=/opt/security-audit/data
+      - SCAN_BASE_DIR=/var/security-scans
+      - CONFIG_PATH=/opt/security-audit/config.json
+      - BASE_PATH=/opt/security-audit
+    depends_on:
+      scanner:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - audit-network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5005/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # Scanning Engine
+  scanner:
+    build:
+      context: .
+      dockerfile: Dockerfile.scanner
+    container_name: security-audit-scanner
+    volumes:
+      - scan-data:/var/security-scans
+      - ./data:/opt/security-audit/data
+      - ./config.json:/opt/security-audit/config.json:ro
+      - ./reporting:/opt/security-audit/reporting:ro
+      - ./generate_report.py:/opt/security-audit/generate_report.py:ro
+      - ${NGINX_CONFIG_PATH:-./target-vm-nginx}:/etc/nginx/sites-enabled:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      - CONFIG_PATH=/opt/security-audit/config.json
+      - SCAN_BASE_DIR=/var/security-scans
+      - TARGET_VM_IP=${TARGET_VM_IP:-}
+      - TARGET_VM_SSH_KEY=${TARGET_VM_SSH_KEY:-}
+      - BASE_PATH=/opt/security-audit
+      - DATA_DIR=/opt/security-audit/data
+    networks:
+      - audit-network
+    restart: unless-stopped
+    privileged: true
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f 'tail -f /dev/null' > /dev/null 2>&1 || pgrep -f python > /dev/null 2>&1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    command: ["tail", "-f", "/dev/null"]
+
+  # OpenVAS/GVM Vulnerability Scanner
+  openvas:
+    image: securecompliance/gvm:latest
+    container_name: security-audit-openvas
+    ports:
+      - "9392:9392"
+    volumes:
+      - openvas-data:/data
+    restart: unless-stopped
+    networks:
+      - audit-network
+    environment:
+      - TZ=${TZ:-UTC}
+    healthcheck:
+      test: ["CMD", "gvmd", "--status"]
+      interval: 60s
+      timeout: 30s
+      retries: 3
+      start_period: 300s
+
+  # Wazuh SIEM
+  wazuh:
+    image: wazuh/wazuh:4.7.0
+    container_name: security-audit-wazuh
+    hostname: wazuh-manager
+    ports:
+      - "1514:1514/udp"
+      - "1515:1515/tcp"
+      - "55000:55000/tcp"
+    volumes:
+      - wazuh-data:/var/ossec/data
+      - wazuh-logs:/var/ossec/logs
+    restart: unless-stopped
+    networks:
+      - audit-network
+    environment:
+      - TZ=${TZ:-UTC}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:55000/"]
+      interval: 60s
+      timeout: 30s
+      retries: 3
+      start_period: 180s
+
+  wazuh-dashboard:
+    image: wazuh/wazuh-dashboard:4.7.0
+    container_name: security-audit-wazuh-dashboard
+    ports:
+      - "5601:5601"
+    volumes:
+      - wazuh-dashboard-data:/usr/share/wazuh-dashboard/data
+    environment:
+      - OPENSEARCH_HOSTS=http://wazuh:55000
+      - TZ=${TZ:-UTC}
+    depends_on:
+      wazuh:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - audit-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5601"]
+      interval: 60s
+      timeout: 30s
+      retries: 3
+      start_period: 60s
+
+  # HashiCorp Vault
+  vault:
+    image: hashicorp/vault:${VAULT_VERSION:-1.15.2}
+    container_name: security-audit-vault
+    ports:
+      - "8200:8200"
+    volumes:
+      - vault-data:/vault/data
+      - vault-config:/vault/config
+    environment:
+      - VAULT_DEV_ROOT_TOKEN_ID=${VAULT_ROOT_TOKEN:-dev-token}
+      - VAULT_DEV_LISTEN_ADDRESS=0.0.0.0:8200
+      - VAULT_ADDR=http://0.0.0.0:8200
+      - TZ=${TZ:-UTC}
+    cap_add:
+      - IPC_LOCK
+    restart: unless-stopped
+    networks:
+      - audit-network
+    healthcheck:
+      test: ["CMD", "vault", "status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    command: vault server -dev -dev-listen-address="0.0.0.0:8200"
+
+volumes:
+  scan-data:
+    driver: local
+  openvas-data:
+    driver: local
+  wazuh-data:
+    driver: local
+  wazuh-logs:
+    driver: local
+  wazuh-dashboard-data:
+    driver: local
+  vault-data:
+    driver: local
+  vault-config:
+    driver: local
+
+networks:
+  audit-network:
+    driver: bridge
